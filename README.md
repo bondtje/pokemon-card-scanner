@@ -32,6 +32,8 @@ af te drukken voor toernooien.
   met een afvink-kolom.
 
 ### 📋 Decklist (officieel formaat)
+- **Meerdere decks**: maak, hernoem, dupliceer en verwijder decks, en kies via een
+  dropdown welk deck actief is (elk deck wordt apart bewaard).
 - Stel een toernooi-deck samen van **precies 60 kaarten**.
 - **Spelergegevens**: naam, Player ID, geboortedatum, divisie (Masters/Senior/Junior).
 - Voeg kaarten uit je collectie toe met een stepper (**max. 4** kopieën per kaart) en

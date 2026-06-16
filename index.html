@@ -201,6 +201,10 @@
   .tab-count{display:inline-block;background:rgba(0,0,0,.3);border-radius:20px;padding:1px 8px;font-size:.8rem;margin-left:2px}
 
   /* decklist */
+  .deck-manager{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+  .deck-manager select{flex:1;min-width:150px;padding:10px 12px;border-radius:10px;
+    border:2px solid rgba(255,203,5,.45);background:rgba(0,0,0,.3);color:var(--txt);font-size:.95rem;font-weight:700}
+  .deck-manager select:focus{outline:none;border-color:var(--poke-yellow)}
   .deck-player{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}
   .deck-player input,.deck-player select{padding:10px 12px;border-radius:10px;border:2px solid rgba(255,255,255,.15);
     background:rgba(0,0,0,.25);color:var(--txt);font-size:.95rem}
@@ -331,10 +335,17 @@
       <h2>📋 Officiële decklist</h2>
       <div class="coll-actions">
         <button class="mini-btn" id="printDeck" title="Decklist afdrukken">🖨️ Afdrukken</button>
-        <button class="mini-btn" id="clearDeck" title="Deck leegmaken">🗑️ Leeg</button>
+        <button class="mini-btn" id="clearDeck" title="Dit deck leegmaken">🗑️ Leeg</button>
       </div>
     </div>
-    <p class="note">Stel een toernooi-deck samen van <b>precies 60 kaarten</b>. Vul je spelergegevens in, voeg kaarten uit je collectie + basis-energie toe, en druk af in het officiële Play!&nbsp;Pokémon-formaat.</p>
+    <div class="deck-manager">
+      <select id="deckSelect" title="Kies een deck"></select>
+      <button class="mini-btn" id="newDeck" title="Nieuw deck">＋ Nieuw</button>
+      <button class="mini-btn" id="renameDeck" title="Naam wijzigen">✏️ Naam</button>
+      <button class="mini-btn" id="dupDeck" title="Deck dupliceren">⧉ Kopie</button>
+      <button class="mini-btn" id="delDeck" title="Deck verwijderen">🗑️ Wis deck</button>
+    </div>
+    <p class="note">Stel meerdere decks samen en kies hierboven welk deck actief is. Een deck telt <b>precies 60 kaarten</b>. Vul je spelergegevens in, voeg kaarten uit je collectie + basis-energie toe, en druk af in het officiële Play!&nbsp;Pokémon-formaat.</p>
     <div class="deck-player">
       <input type="text" id="plName" placeholder="Spelernaam">
       <input type="text" id="plId" placeholder="Player ID">
@@ -1053,24 +1064,78 @@ function buildPrint(){
 }
 $('printColl').addEventListener('click', () => { buildPrint(); window.print(); });
 
-// ====================== DECKLIST ======================
-const DECK_KEY = 'pokemon_deck_v1';
+// ====================== DECKLIST (meerdere decks) ======================
+const DECKS_KEY = 'pokemon_decks_v1';
+const DECK_KEY  = 'pokemon_deck_v1';   // oud formaat (één deck) — voor migratie
 const BASIC_ENERGIES = ['Grass','Fire','Water','Lightning','Psychic','Fighting','Darkness','Metal','Fairy'];
-let deck = loadDeck();
 
-function loadDeck(){
-  try {
-    const d = JSON.parse(localStorage.getItem(DECK_KEY)) || {};
-    return { player: d.player || {}, cards: d.cards || {}, energy: d.energy || {} };
-  } catch(e){ return { player:{}, cards:{}, energy:{} }; }
+let decksStore = loadDecks();
+let deck = decksStore.decks[decksStore.activeId];
+
+function newDeckId(){ return 'd' + Date.now() + Math.floor(Math.random()*1000); }
+function newDeckObj(name){ return { id:newDeckId(), name:name||'Nieuw deck', player:{}, cards:{}, energy:{} }; }
+
+function loadDecks(){
+  let store = null;
+  try { store = JSON.parse(localStorage.getItem(DECKS_KEY)); } catch(e){}
+  if(store && store.decks && Object.keys(store.decks).length){
+    if(!store.decks[store.activeId]) store.activeId = Object.keys(store.decks)[0];
+    return store;
+  }
+  // migratie: bestaand enkel deck overnemen
+  let old = null;
+  try { old = JSON.parse(localStorage.getItem(DECK_KEY)); } catch(e){}
+  const d = newDeckObj('Mijn deck');
+  if(old){ d.player = old.player||{}; d.cards = old.cards||{}; d.energy = old.energy||{}; }
+  return { activeId: d.id, decks: { [d.id]: d } };
 }
-function saveDeck(){ try { localStorage.setItem(DECK_KEY, JSON.stringify(deck)); } catch(e){} }
+function saveDeck(){ try { localStorage.setItem(DECKS_KEY, JSON.stringify(decksStore)); } catch(e){} }
 
-function deckCount(){
+function deckCount(d){
+  d = d || deck;
   let n = 0;
-  for(const id in deck.cards) n += deck.cards[id].qty;
-  for(const t in deck.energy) n += deck.energy[t];
+  for(const id in d.cards) n += d.cards[id].qty;
+  for(const t in d.energy) n += d.energy[t];
   return n;
+}
+
+// ----- deckbeheer -----
+function switchDeck(id){
+  if(!decksStore.decks[id]) return;
+  decksStore.activeId = id; deck = decksStore.decks[id];
+  saveDeck(); renderDeck();
+}
+function createDeck(){
+  const name = prompt('Naam voor het nieuwe deck:', 'Deck ' + (Object.keys(decksStore.decks).length + 1));
+  if(name === null) return;
+  const d = newDeckObj(name.trim() || 'Nieuw deck');
+  decksStore.decks[d.id] = d; decksStore.activeId = d.id; deck = d;
+  saveDeck(); renderDeck();
+}
+function renameDeck(){
+  const name = prompt('Nieuwe naam voor dit deck:', deck.name);
+  if(name === null) return;
+  deck.name = name.trim() || deck.name;
+  saveDeck(); renderDeck();
+}
+function duplicateDeck(){
+  const d = newDeckObj(deck.name + ' (kopie)');
+  d.player = Object.assign({}, deck.player);
+  d.cards  = JSON.parse(JSON.stringify(deck.cards));
+  d.energy = Object.assign({}, deck.energy);
+  decksStore.decks[d.id] = d; decksStore.activeId = d.id; deck = d;
+  saveDeck(); renderDeck();
+}
+function deleteDeck(){
+  if(Object.keys(decksStore.decks).length <= 1){
+    alert('Je moet minstens één deck houden. Gebruik "Leeg" om dit deck leeg te maken.');
+    return;
+  }
+  if(!confirm('Deck "' + deck.name + '" definitief verwijderen?')) return;
+  delete decksStore.decks[decksStore.activeId];
+  decksStore.activeId = Object.keys(decksStore.decks)[0];
+  deck = decksStore.decks[decksStore.activeId];
+  saveDeck(); renderDeck();
 }
 
 function setDeckCard(id, delta){
@@ -1102,6 +1167,12 @@ function setEnergy(type, delta){
 }
 
 function renderDeck(){
+  // deck-keuzemenu
+  const sel = $('deckSelect');
+  sel.innerHTML = Object.values(decksStore.decks)
+    .map(d => `<option value="${d.id}">${esc(d.name)} — ${deckCount(d)}/60</option>`).join('');
+  sel.value = decksStore.activeId;
+
   // spelergegevens
   $('plName').value = deck.player.name || '';
   $('plId').value   = deck.player.id || '';
@@ -1166,10 +1237,17 @@ function renderDeck(){
 $('plDiv').addEventListener('change', () => { deck.player.division = $('plDiv').value; saveDeck(); });
 
 $('clearDeck').addEventListener('click', () => {
-  if(!confirm('Het hele deck leegmaken? (spelergegevens blijven staan)')) return;
+  if(!confirm('Dit deck leegmaken? (spelergegevens blijven staan)')) return;
   deck.cards = {}; deck.energy = {};
   saveDeck(); renderDeck();
 });
+
+// deckbeheer-knoppen
+$('deckSelect').addEventListener('change', e => switchDeck(e.target.value));
+$('newDeck').addEventListener('click', createDeck);
+$('renameDeck').addEventListener('click', renameDeck);
+$('dupDeck').addEventListener('click', duplicateDeck);
+$('delDeck').addEventListener('click', deleteDeck);
 
 // ---------- Officiële decklist afdrukken ----------
 function buildDeckPrint(){
@@ -1191,7 +1269,7 @@ function buildDeckPrint(){
   const total = deckCount();
   const sum = arr => arr.reduce((s,i)=>s+i.qty,0);
 
-  let html = '<div class="pr-title">Play! Pokémon — Decklist</div>' +
+  let html = '<div class="pr-title">Play! Pokémon — Decklist: ' + esc(deck.name || '') + '</div>' +
     '<table class="pr-table" style="margin-bottom:10px"><tbody>' +
     '<tr><th>Speler</th><td>'+esc(p.name||'')+'</td><th>Player ID</th><td>'+esc(p.id||'')+'</td></tr>' +
     '<tr><th>Geboortedatum</th><td>'+esc(p.dob||'')+'</td><th>Divisie</th><td>'+esc(p.division||'Masters')+'</td></tr>' +
