@@ -79,18 +79,9 @@
   /* vaste, kaart-achtige verhouding; vult altijd (geen zwarte balken) */
   .cam-frame{position:relative;width:100%;max-width:380px;aspect-ratio:3/4;max-height:62vh;margin:0 auto;overflow:hidden;border-radius:12px}
   .reticle{
-    position:absolute;inset:5% 14%;
-    border:3px dashed rgba(255,255,255,.35);border-radius:12px;pointer-events:none;
+    position:absolute;inset:3% 4%;
+    border:3px dashed rgba(255,203,5,.5);border-radius:12px;pointer-events:none;
   }
-  /* naam-zone (boven) en nummer-zone (onder) die de OCR daadwerkelijk leest */
-  .reticle::before, .reticle::after{
-    content:"";position:absolute;border:2px solid var(--poke-yellow);
-    border-radius:6px;background:rgba(255,203,5,.10);
-    font-size:.58rem;color:var(--poke-yellow);font-weight:700;
-    display:flex;align-items:flex-start;padding:1px 4px;
-  }
-  .reticle::before{content:"NAAM";left:2%;top:1.5%;width:70%;height:13%}
-  .reticle::after {content:"NR";  left:2%;top:88%; width:62%;height:11%}
   .reticle span{
     position:absolute;bottom:-24px;left:50%;transform:translateX(-50%);
     font-size:.72rem;color:var(--poke-yellow);text-align:center;
@@ -204,7 +195,7 @@
     <div class="cam-frame">
       <video id="video" autoplay playsinline></video>
       <canvas id="snapshot" class="hidden"></canvas>
-      <div class="reticle" id="reticle"><span>Vul het kader met de kaart — naam in het bovenvak, nummer in het ondervak</span></div>
+      <div class="reticle" id="reticle"><span>Vul het kader met de hele kaart — recht, scherp en bij goed licht</span></div>
     </div>
     <div class="btn-row">
       <button class="btn-red" id="startCam">Camera starten</button>
@@ -264,12 +255,12 @@ async function initWorker(){
   numWorker = await Tesseract.createWorker('eng');
   await numWorker.setParameters({
     tessedit_char_whitelist: '0123456789/',
-    tessedit_pageseg_mode: '7'
+    tessedit_pageseg_mode: '3'
   });
   nameWorker = await Tesseract.createWorker('eng');
   await nameWorker.setParameters({
     tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'.- ",
-    tessedit_pageseg_mode: '7'
+    tessedit_pageseg_mode: '3'
   });
   ready = true;
 }
@@ -336,14 +327,6 @@ function stopScanLoop(){
   $('ocrSpin').classList.remove('on');
 }
 
-// Het kader (.reticle) staat op inset 5% boven/onder, 14% links/rechts.
-// We gaan ervan uit dat de kaart het kader ongeveer vult, en lezen alleen
-// de NAAM-strook (bovenaan) en de NUMMER-strook (onderaan) — niet de illustratie.
-const RET = { top:0.05, bottom:0.95, left:0.14, right:0.86 };
-// zones, uitgedrukt 0..1 binnen het kader:
-const NAME_ZONE = { x:0.02, y:0.015, w:0.70, h:0.13 };   // naam: links-boven
-const NUM_ZONE  = { x:0.02, y:0.88,  w:0.62, h:0.11 };   // nummer: links-onder
-
 // Maak één stilstaande foto op volle videoresolutie (in de zichtbare #snapshot canvas).
 function captureStill(){
   const vw = video.videoWidth, vh = video.videoHeight;
@@ -352,33 +335,35 @@ function captureStill(){
   return canvas;
 }
 
-// Knip + verscherp een zone uit het stilstaande beeld. Het beeld wordt met
-// object-fit:cover getoond (gecropt), dus we rekenen het zichtbare gebied terug
-// naar bronpixels — werkt op elke camera/oriëntatie.
-function cropZone(src, z, scale){
+// Pak het VOLLEDIGE zichtbare beeld (wat jij ziet) en verscherp het voor OCR.
+// Het beeld wordt met object-fit:cover getoond, dus we rekenen het zichtbare
+// gebied terug naar bronpixels — werkt op elke camera/oriëntatie.
+function cropCard(src){
   const vw = src.width, vh = src.height;
   if(!vw) return null;
   const frame = document.querySelector('.cam-frame');
   const Cw = frame.clientWidth, Ch = frame.clientHeight;
   const cover = Math.max(Cw/vw, Ch/vh);
-  const visW = Cw/cover, visH = Ch/cover;          // zichtbaar deel van de bron (px)
-  const offX = (vw - visW)/2, offY = (vh - visH)/2; // afgesneden randen
-  const rw = RET.right - RET.left, rh = RET.bottom - RET.top;
-  const fx = RET.left + z.x*rw, fy = RET.top + z.y*rh;
-  const sx = Math.max(0, Math.floor(offX + fx*visW));
-  const sy = Math.max(0, Math.floor(offY + fy*visH));
-  const sw = Math.floor(z.w * rw * visW);
-  const sh = Math.floor(z.h * rh * visH);
+  const visW = Cw/cover, visH = Ch/cover;
+  const offX = (vw - visW)/2, offY = (vh - visH)/2;
+  const scale = Math.min(2.5, Math.max(1, 1700/visW));   // mik op ~1700px breed
   const c = document.createElement('canvas');
-  c.width = sw*scale; c.height = sh*scale;
+  c.width = Math.round(visW*scale); c.height = Math.round(visH*scale);
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
-  binarize(ctx, c.width, c.height);
+  ctx.drawImage(src, offX, offY, visW, visH, 0, 0, c.width, c.height);
+  // grijswaarden + contrast
+  const img = ctx.getImageData(0,0,c.width,c.height), d = img.data;
+  for(let i=0;i<d.length;i+=4){
+    let g = 0.3*d[i] + 0.59*d[i+1] + 0.11*d[i+2];
+    g = (g-128)*1.4 + 135; g = g<0?0:(g>255?255:g);
+    d[i]=d[i+1]=d[i+2]=g;
+  }
+  ctx.putImageData(img,0,0);
   return c;
 }
 
-// Zwart-wit maken met automatische Otsu-drempel (sterk betere OCR op tekst).
+// Zwart-wit maken met automatische Otsu-drempel (sterk betere OCR op cijfers/tekst).
 function binarize(ctx, w, h){
   const img = ctx.getImageData(0,0,w,h), d = img.data;
   const total = w*h;
@@ -388,7 +373,6 @@ function binarize(ctx, w, h){
     const g = (0.3*d[i] + 0.59*d[i+1] + 0.11*d[i+2])|0;
     gray[p] = g; hist[g]++;
   }
-  // Otsu-drempel bepalen
   let sum=0; for(let t=0;t<256;t++) sum += t*hist[t];
   let sumB=0, wB=0, maxVar=0, thr=127;
   for(let t=0;t<256;t++){
@@ -399,7 +383,6 @@ function binarize(ctx, w, h){
     const v = wB*wF*(mB-mF)*(mB-mF);
     if(v > maxVar){ maxVar=v; thr=t; }
   }
-  // tekst moet donker op wit zijn; als de meeste pixels donker zijn -> inverteren
   let dark=0; for(let p=0;p<total;p++) if(gray[p] < thr) dark++;
   const invert = dark > total/2;
   for(let i=0,p=0;i<d.length;i+=4,p++){
@@ -411,31 +394,67 @@ function binarize(ctx, w, h){
   ctx.putImageData(img,0,0);
 }
 
-function cleanName(t){
-  let s = (t||'').replace(/\n/g,' ').replace(/[^A-Za-z'.\- ]/g,' ').replace(/\s+/g,' ').trim();
-  s = s.replace(/^(Basic|Stage\s*\d|Stage|GX|EX|V|VMAX|VSTAR)\s+/i,'').trim();
-  return s.length >= 3 ? s : '';
+// Veelvoorkomende kaartwoorden die GEEN Pokémon-naam zijn (om valse matches te vermijden).
+const NAME_STOP = new Set(('basic stage stadium item trainer supporter energy special this your '+
+ 'active spot retreat asleep collapse block weakness resistance ability when eats done eating goes '+
+ 'promptly sleep satisfied unless over pounds food every illus design nintendo creatures game freak '+
+ 'niantic length height weight evolves from into prize card flip coin damage defending each turn put '+
+ 'pokemon attack attacks rule box').split(' '));
+
+// Zoek de beste Pokémon-naam door ELK woord in de tekst te vergelijken met de namenlijst.
+function bestNameFromText(text){
+  if(!pokeNames.length) return null;
+  const toks = (text.toLowerCase().match(/[a-z]{3,}/g) || []);
+  let best = null;
+  toks.forEach((tok, i) => {
+    if(NAME_STOP.has(tok)) return;
+    let bd=99, bn=null;
+    for(const nm of pokeNames){
+      const base = nm.split('-')[0];
+      if(Math.abs(base.length - tok.length) > 2) continue;   // snelle lengte-filter
+      const dd = levenshtein(tok, base);
+      if(dd < bd){ bd=dd; bn=base; if(dd===0) break; }
+    }
+    if(bn != null){
+      // voorkeur: kleinste afstand; bij gelijk de hoogste op de kaart (lagere index)
+      if(!best || bd < best.d || (bd === best.d && i < best.i)){
+        best = { token: tok, base: bn, d: bd, i };
+      }
+    }
+  });
+  return best;
 }
 
-// Lees beide zones van de foto. Retourneert {num,total,raw,conf, name,nameConf, numText,nameText}
+// Lees de hele gefotografeerde kaart. Retourneert naam + uniek nummer.
 async function readCardFromStill(src){
-  const out = { num:null,total:null,raw:null,conf:0, name:'',nameConf:0, numText:'',nameText:'' };
-  // 1) NAAM-zone (grote, goed leesbare tekst — stuurt de zoekopdracht)
-  const nameImg = cropZone(src, NAME_ZONE, 3);
-  if(nameImg){
-    const { data } = await nameWorker.recognize(nameImg);
-    out.nameText = (data.text||'').trim();
-    const nm = cleanName(out.nameText);
-    if(nm){ out.name = nm; out.nameConf = data.confidence||0; }
+  const out = { num:null,total:null,raw:null,conf:0, name:'',nameConf:0,nameCands:[],nameExact:false,nameToken:'', numText:'',nameText:'' };
+  const card = cropCard(src);
+  if(!card) return out;
+
+  // PASS 1 — NAAM: lees alle letters; match elk woord tegen de namenlijst.
+  const nres = await nameWorker.recognize(card);
+  const fullText = (nres.data.text || '').replace(/\s+/g,' ').trim();
+  const topText  = ((nres.data.lines||[]).slice(0,5).map(l => l.text).join(' ') || fullText).trim();
+  out.nameText = topText;
+  const hit = bestNameFromText(topText) || bestNameFromText(fullText);
+  if(hit){
+    out.name     = cap(hit.base);
+    out.nameToken= hit.token;
+    out.nameExact= hit.d === 0;
+    out.nameConf = Math.max(0, 100 - hit.d*22);
+    out.nameCands= suggestNames(hit.token, 3);
   }
-  // 2) NUMMER-zone (klein — extra filter om de juiste versie te kiezen)
-  const numImg = cropZone(src, NUM_ZONE, 4);
-  if(numImg){
-    const { data } = await numWorker.recognize(numImg);
-    out.numText = (data.text||'').trim();
-    const m = out.numText.replace(/\s+/g,'').match(/(\d{1,4})\/(\d{1,4})/);
-    if(m){ out.num=parseInt(m[1],10); out.total=parseInt(m[2],10); out.raw=m[1]+'/'+m[2]; out.conf=data.confidence||0; }
-  }
+
+  // PASS 2 — NUMMER: binariseer en zoek "055/078" overal in de tekst.
+  const cbin = document.createElement('canvas');
+  cbin.width = card.width; cbin.height = card.height;
+  const cx = cbin.getContext('2d');
+  cx.drawImage(card, 0, 0);
+  binarize(cx, cbin.width, cbin.height);
+  const mres = await numWorker.recognize(cbin);
+  out.numText = (mres.data.text || '').replace(/\s+/g,' ').trim();
+  const m = out.numText.match(/(\d{1,3})\s*\/\s*(\d{1,3})/);
+  if(m){ out.num=parseInt(m[1],10); out.total=parseInt(m[2],10); out.raw=m[1]+'/'+m[2]; out.conf=mres.data.confidence||0; }
   return out;
 }
 
@@ -443,10 +462,11 @@ async function readCardFromStill(src){
 function updateDebug(p){
   $('dbgParsed').textContent =
     'nr: ' + (p.raw||'—') + ' (' + Math.round(p.conf||0) + '%)   |   ' +
-    'naam: ' + (p.name||'—') + ' (' + Math.round(p.nameConf||0) + '%)';
+    'naam: ' + (p.name||'—') + (p.nameToken?(' [gelezen: '+p.nameToken+']'):'') +
+    ' (' + Math.round(p.nameConf||0) + '%' + (p.nameExact?', exact':'') + ')';
   $('dbgRaw').textContent =
-    'nummer-zone: "' + (p.numText||'') + '"\n' +
-    'naam-zone:   "' + (p.nameText||'') + '"';
+    'cijfers (hele kaart): "' + (p.numText||'') + '"\n' +
+    'tekst (bovenkant):    "' + (p.nameText||'') + '"';
 }
 
 // ---------- Foto maken & analyseren ----------
@@ -477,36 +497,29 @@ $('manualScan').addEventListener('click', async () => {
 function doLookup(p){
   clearSuggest();
   if(p.raw) $('searchNum').value = p.raw;
+  if(p.name) $('searchInput').value = p.name;
 
-  const sugg = suggestNames(p.name, 3);
-  const best = sugg[0];
-  const firstLen = (p.name||'').split(' ')[0].replace(/[^A-Za-z]/g,'').length;
-  const tol = Math.max(1, Math.floor(firstLen*0.34));
-
-  if(best && best.d === 0){
-    // zekere match
-    $('searchInput').value = best.name;
-    $('ocrStatus').textContent = '✅ ' + best.name + (p.raw?(' · nr ' + p.raw):'') + ' — opzoeken...';
-    doSearch(best.name, p.num, p.total);
+  if(p.name && p.nameExact){
+    // zekere naam (exacte match in de namenlijst)
+    $('ocrStatus').textContent = '✅ ' + p.name + (p.raw?(' · nr ' + p.raw):'') + ' — opzoeken...';
+    doSearch(p.name, p.num, p.total);
   }
-  else if(best){
-    // twijfel: toon suggestie(s) mét nummer
-    showSuggest(sugg, p);
-    const guess = best.d <= tol ? best.name : (p.name || best.name);
-    $('searchInput').value = guess;
-    $('ocrStatus').textContent = '🤔 Naam onzeker' + (p.name?(' ("' + p.name + '")'):'') +
+  else if(p.name){
+    // onzekere naam: toon suggesties (uit het echt gelezen woord) mét nummer
+    if(p.nameCands && p.nameCands.length) showSuggest(p.nameCands, p);
+    $('ocrStatus').textContent = '🤔 Naam onzeker' + (p.nameToken?(' (gelezen: "' + p.nameToken + '")'):'') +
       (p.raw?(' · nr ' + p.raw):'') + ' — bevestig een suggestie hieronder.';
-    // alvast een redelijke poging tonen
-    if(best.d <= tol)      doSearch(best.name, p.num, p.total);
-    else if(p.num != null) doSearch('', p.num, p.total);   // val terug op het nummer
+    // laat alvast iets zien: het NUMMER is betrouwbaarder dan een onzekere naam
+    if(p.num != null) doSearch('', p.num, p.total);
+    else              doSearch(p.name, null, null);
   }
   else if(p.num != null){
-    // geen naam, wel nummer
-    $('ocrStatus').textContent = '✅ nr ' + p.raw + ' — opzoeken...';
+    // geen naam herkend, wel een nummer
+    $('ocrStatus').textContent = '✅ nr ' + p.raw + ' — opzoeken op nummer...';
     doSearch('', p.num, p.total);
   }
   else{
-    $('ocrStatus').textContent = '🤔 Naam/nummer niet leesbaar. Houd de kaart dichterbij, scherp en bij goed licht — of typ naam/nummer hieronder.';
+    $('ocrStatus').textContent = '🤔 Niets leesbaar. Houd de kaart groot, recht en scherp in beeld bij goed licht — of typ naam/nummer hieronder.';
   }
 }
 
