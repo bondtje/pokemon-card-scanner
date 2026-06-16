@@ -200,6 +200,27 @@
   .tab.active{background:linear-gradient(var(--poke-red),var(--poke-red-dark));color:#fff;border-color:transparent}
   .tab-count{display:inline-block;background:rgba(0,0,0,.3);border-radius:20px;padding:1px 8px;font-size:.8rem;margin-left:2px}
 
+  /* decklist */
+  .deck-player{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}
+  .deck-player input,.deck-player select{padding:10px 12px;border-radius:10px;border:2px solid rgba(255,255,255,.15);
+    background:rgba(0,0,0,.25);color:var(--txt);font-size:.95rem}
+  .deck-player input:focus,.deck-player select:focus{outline:none;border-color:var(--poke-yellow)}
+  .deck-total{margin-top:6px;font-weight:800;font-size:1.1rem;padding:10px;border-radius:10px;text-align:center;
+    background:rgba(238,21,21,.2);border:1px solid rgba(238,21,21,.5);color:#ffb3b3}
+  .deck-total.ok{background:rgba(46,204,113,.2);border-color:rgba(46,204,113,.5);color:#9fffc8}
+  .energy-row{display:flex;flex-wrap:wrap;gap:8px}
+  .energy-chip{display:flex;align-items:center;gap:6px;background:var(--card-2);border:1px solid rgba(255,255,255,.15);
+    border-radius:20px;padding:4px 6px 4px 12px;font-size:.85rem;font-weight:700}
+  .energy-chip .e-name{min-width:62px}
+  .energy-chip button{width:26px;height:26px;border:none;border-radius:50%;font-size:1rem;font-weight:800;cursor:pointer;
+    background:rgba(255,255,255,.12);color:var(--txt)}
+  .energy-chip .e-qty{min-width:20px;text-align:center}
+  .deck-stepper{display:flex;align-items:center;gap:8px;margin-top:8px;justify-content:center}
+  .deck-stepper button{width:34px;height:34px;border:none;border-radius:8px;font-size:1.2rem;font-weight:800;cursor:pointer;
+    background:var(--card-2);color:var(--txt)}
+  .deck-stepper .dq{min-width:28px;text-align:center;font-weight:800;font-size:1.05rem}
+  .deck-stepper .dq.has{color:var(--good)}
+
   /* afdrukbare kaartlijst */
   #printArea{display:none}
   .pr-title{font-size:22px;font-weight:bold;margin-bottom:2px}
@@ -238,7 +259,8 @@
   <!-- TABS -->
   <nav class="tabs">
     <button class="tab active" id="tabScanner">📷 Scanner</button>
-    <button class="tab" id="tabCollection">📚 Mijn collectie <span class="tab-count" id="tabCount"></span></button>
+    <button class="tab" id="tabCollection">📚 Collectie <span class="tab-count" id="tabCount"></span></button>
+    <button class="tab" id="tabDeck">📋 Decklist <span class="tab-count" id="deckCount"></span></button>
   </nav>
 
   <!-- ===== SCANNER VIEW ===== -->
@@ -302,7 +324,42 @@
   </div>
   </div><!-- ===== /COLLECTION VIEW ===== -->
 
-  <!-- Afdrukbare kaartlijst (alleen zichtbaar bij printen) -->
+  <!-- ===== DECKLIST VIEW ===== -->
+  <div id="view-deck" class="hidden">
+  <div class="panel">
+    <div class="coll-head">
+      <h2>📋 Officiële decklist</h2>
+      <div class="coll-actions">
+        <button class="mini-btn" id="printDeck" title="Decklist afdrukken">🖨️ Afdrukken</button>
+        <button class="mini-btn" id="clearDeck" title="Deck leegmaken">🗑️ Leeg</button>
+      </div>
+    </div>
+    <p class="note">Stel een toernooi-deck samen van <b>precies 60 kaarten</b>. Vul je spelergegevens in, voeg kaarten uit je collectie + basis-energie toe, en druk af in het officiële Play!&nbsp;Pokémon-formaat.</p>
+    <div class="deck-player">
+      <input type="text" id="plName" placeholder="Spelernaam">
+      <input type="text" id="plId" placeholder="Player ID">
+      <input type="text" id="plDob" placeholder="Geboortedatum (dd/mm/jjjj)">
+      <select id="plDiv">
+        <option value="Masters">Masters</option>
+        <option value="Senior">Senior</option>
+        <option value="Junior">Junior</option>
+      </select>
+    </div>
+    <div class="deck-total" id="deckTotal">Totaal: 0 / 60</div>
+  </div>
+
+  <div class="panel">
+    <h2>⚡ Basis-energie</h2>
+    <div class="energy-row" id="energyRow"></div>
+  </div>
+
+  <div class="panel">
+    <h2>🃏 Kaarten uit je collectie</h2>
+    <div class="results" id="deckCards"></div>
+  </div>
+  </div><!-- ===== /DECKLIST VIEW ===== -->
+
+  <!-- Afdrukbare kaartlijst / decklist (alleen zichtbaar bij printen) -->
   <div id="printArea"></div>
 
   <footer>
@@ -932,17 +989,20 @@ $('importFile').addEventListener('change', e => {
   e.target.value = '';
 });
 
-// ---------- Tabs (scanner ↔ collectie) ----------
+// ---------- Tabs (scanner / collectie / decklist) ----------
 function showView(which){
-  const scan = which === 'scanner';
-  $('view-scanner').classList.toggle('hidden', !scan);
-  $('view-collection').classList.toggle('hidden', scan);
-  $('tabScanner').classList.toggle('active', scan);
-  $('tabCollection').classList.toggle('active', !scan);
+  const views = { scanner:'view-scanner', collection:'view-collection', deck:'view-deck' };
+  const tabs  = { scanner:'tabScanner',  collection:'tabCollection',  deck:'tabDeck' };
+  for(const k in views){
+    $(views[k]).classList.toggle('hidden', k !== which);
+    $(tabs[k]).classList.toggle('active', k === which);
+  }
+  if(which === 'deck') renderDeck();
   window.scrollTo(0,0);
 }
 $('tabScanner').addEventListener('click', () => showView('scanner'));
 $('tabCollection').addEventListener('click', () => showView('collection'));
+$('tabDeck').addEventListener('click', () => showView('deck'));
 
 // ---------- Afdrukbare kaartlijst (gegroepeerd Pokémon / Trainer / Energy) ----------
 function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
@@ -993,7 +1053,173 @@ function buildPrint(){
 }
 $('printColl').addEventListener('click', () => { buildPrint(); window.print(); });
 
+// ====================== DECKLIST ======================
+const DECK_KEY = 'pokemon_deck_v1';
+const BASIC_ENERGIES = ['Grass','Fire','Water','Lightning','Psychic','Fighting','Darkness','Metal','Fairy'];
+let deck = loadDeck();
+
+function loadDeck(){
+  try {
+    const d = JSON.parse(localStorage.getItem(DECK_KEY)) || {};
+    return { player: d.player || {}, cards: d.cards || {}, energy: d.energy || {} };
+  } catch(e){ return { player:{}, cards:{}, energy:{} }; }
+}
+function saveDeck(){ try { localStorage.setItem(DECK_KEY, JSON.stringify(deck)); } catch(e){} }
+
+function deckCount(){
+  let n = 0;
+  for(const id in deck.cards) n += deck.cards[id].qty;
+  for(const t in deck.energy) n += deck.energy[t];
+  return n;
+}
+
+function setDeckCard(id, delta){
+  const meta = collection[id];
+  const cur = deck.cards[id] ? deck.cards[id].qty : 0;
+  let q = cur + delta;
+  if(q < 0) q = 0;
+  if(q > 4) q = 4;                       // max 4 kopieën per kaart (toernooiregel)
+  if(q === 0){ delete deck.cards[id]; }
+  else {
+    const src = deck.cards[id] || (meta ? {
+      name: meta.name, supertype: meta.supertype || '', setName: meta.setName || '',
+      setPtcgo: meta.setPtcgo || '', number: meta.number || '', total: meta.total || ''
+    } : { name:'?', supertype:'', setName:'', setPtcgo:'', number:'', total:'' });
+    src.qty = q;
+    deck.cards[id] = src;
+  }
+  saveDeck();
+  renderDeck();
+}
+function setEnergy(type, delta){
+  const cur = deck.energy[type] || 0;
+  let q = cur + delta;
+  if(q < 0) q = 0;
+  if(q > 59) q = 59;
+  if(q === 0) delete deck.energy[type]; else deck.energy[type] = q;
+  saveDeck();
+  renderDeck();
+}
+
+function renderDeck(){
+  // spelergegevens
+  $('plName').value = deck.player.name || '';
+  $('plId').value   = deck.player.id || '';
+  $('plDob').value  = deck.player.dob || '';
+  $('plDiv').value  = deck.player.division || 'Masters';
+
+  // basis-energie
+  const er = $('energyRow');
+  er.innerHTML = BASIC_ENERGIES.map(t => {
+    const q = deck.energy[t] || 0;
+    return `<div class="energy-chip"><span class="e-name t-${t}" style="padding:1px 8px;border-radius:10px;color:#fff">${t}</span>`+
+      `<button type="button" data-e="${t}" data-d="-1">−</button>`+
+      `<span class="e-qty">${q}</span>`+
+      `<button type="button" data-e="${t}" data-d="1">+</button></div>`;
+  }).join('');
+  er.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setEnergy(b.dataset.e, +b.dataset.d)));
+
+  // kaarten uit collectie met deck-stepper
+  const wrap = $('deckCards');
+  const items = Object.values(collection);
+  if(!items.length){
+    wrap.innerHTML = '<div class="empty">Je collectie is leeg. Scan/zoek eerst kaarten en voeg ze toe via ➕ — daarna kun je ze hier in je deck zetten.</div>';
+  } else {
+    wrap.innerHTML = '';
+    items.slice().reverse().forEach(it => {
+      const q = deck.cards[it.id] ? deck.cards[it.id].qty : 0;
+      const el = document.createElement('div');
+      el.className = 'result-card';
+      el.innerHTML = `
+        <img src="${it.image}" alt="${it.name}" loading="lazy">
+        <div class="rc-body">
+          <div class="rc-name">${it.name}</div>
+          <div class="rc-meta">${it.setName||''} · #${it.number||'?'}/${it.total||'?'}${it.supertype?(' · '+it.supertype):''}</div>
+          <div class="deck-stepper">
+            <button type="button" data-id="${it.id}" data-d="-1">−</button>
+            <span class="dq ${q>0?'has':''}">${q}</span>
+            <button type="button" data-id="${it.id}" data-d="1">+</button>
+          </div>
+        </div>`;
+      el.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setDeckCard(b.dataset.id, +b.dataset.d)));
+      wrap.appendChild(el);
+    });
+  }
+
+  // totaal
+  const n = deckCount();
+  const tot = $('deckTotal');
+  tot.textContent = 'Totaal: ' + n + ' / 60' + (n>60?'  (te veel!)':(n<60?'  (nog '+(60-n)+' nodig)':'  ✓ compleet'));
+  tot.classList.toggle('ok', n === 60);
+  $('deckCount').textContent = n || '';
+}
+
+// spelergegevens opslaan bij typen
+['plName','plId','plDob'].forEach(idf => {
+  $(idf).addEventListener('input', () => {
+    deck.player.name = $('plName').value.trim();
+    deck.player.id   = $('plId').value.trim();
+    deck.player.dob  = $('plDob').value.trim();
+    saveDeck();
+  });
+});
+$('plDiv').addEventListener('change', () => { deck.player.division = $('plDiv').value; saveDeck(); });
+
+$('clearDeck').addEventListener('click', () => {
+  if(!confirm('Het hele deck leegmaken? (spelergegevens blijven staan)')) return;
+  deck.cards = {}; deck.energy = {};
+  saveDeck(); renderDeck();
+});
+
+// ---------- Officiële decklist afdrukken ----------
+function buildDeckPrint(){
+  const area = $('printArea');
+  // groepeer kaarten
+  const groups = { 'Pokémon':[], 'Trainer':[], 'Energy':[] };
+  for(const id in deck.cards){
+    const c = deck.cards[id];
+    let g = c.supertype || '';
+    if(/pok/i.test(g)) g='Pokémon'; else if(/train/i.test(g)) g='Trainer'; else if(/energ/i.test(g)) g='Energy'; else g='Pokémon';
+    groups[g].push(c);
+  }
+  // basis-energie toevoegen aan Energy
+  for(const t of BASIC_ENERGIES){
+    if(deck.energy[t]) groups['Energy'].push({ qty:deck.energy[t], name:'Basic '+t+' Energy', setPtcgo:'', setName:'', number:'', total:'' });
+  }
+  const p = deck.player;
+  const today = new Date().toLocaleDateString('nl-BE');
+  const total = deckCount();
+  const sum = arr => arr.reduce((s,i)=>s+i.qty,0);
+
+  let html = '<div class="pr-title">Play! Pokémon — Decklist</div>' +
+    '<table class="pr-table" style="margin-bottom:10px"><tbody>' +
+    '<tr><th>Speler</th><td>'+esc(p.name||'')+'</td><th>Player ID</th><td>'+esc(p.id||'')+'</td></tr>' +
+    '<tr><th>Geboortedatum</th><td>'+esc(p.dob||'')+'</td><th>Divisie</th><td>'+esc(p.division||'Masters')+'</td></tr>' +
+    '<tr><th>Datum</th><td>'+today+'</td><th>Totaal</th><td>'+total+' / 60'+(total===60?'  ✓':'  ✗')+'</td></tr>' +
+    '</tbody></table>';
+
+  ['Pokémon','Trainer','Energy'].forEach(g => {
+    const arr = groups[g].slice().sort((a,b)=>a.name.localeCompare(b.name));
+    html += '<div class="pr-group">'+g+' — '+sum(arr)+'</div>';
+    html += '<table class="pr-table"><thead><tr><th class="c">Aantal</th><th>Kaartnaam</th><th>Set</th><th class="c">Nr</th></tr></thead><tbody>';
+    if(!arr.length){
+      html += '<tr><td class="c"></td><td colspan="3" style="color:#777">—</td></tr>';
+    } else {
+      arr.forEach(c => {
+        const set = c.setPtcgo || c.setName || '';
+        const nr = c.number ? (c.number + (c.total?('/'+c.total):'')) : '';
+        html += '<tr><td class="c">'+c.qty+'</td><td>'+esc(c.name)+'</td><td>'+esc(set)+'</td><td class="c">'+esc(nr)+'</td></tr>';
+      });
+    }
+    html += '</tbody></table>';
+  });
+  html += '<div class="pr-total">Totaal aantal kaarten: '+total+' / 60'+(total===60?'  ✓ geldig':'  ✗ moet 60 zijn')+'</div>';
+  area.innerHTML = html;
+}
+$('printDeck').addEventListener('click', () => { buildDeckPrint(); window.print(); });
+
 renderCollection();
+renderDeck();
 
 </script>
 </body>
