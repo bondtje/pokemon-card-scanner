@@ -115,6 +115,7 @@
     background:rgba(0,0,0,.25);color:var(--txt);font-size:1rem;
   }
   input[type=text]:focus{outline:none;border-color:var(--poke-yellow)}
+  .num-input{flex:0 0 130px;min-width:90px}
 
   .status{
     margin-top:12px;font-size:.9rem;color:var(--muted);min-height:20px;
@@ -210,11 +211,12 @@
   <div class="panel">
     <h2>🔎 Zoeken</h2>
     <div class="search-row">
-      <input type="text" id="searchInput" placeholder="Bijv. Charizard, Pikachu VMAX ...">
+      <input type="text" id="searchInput" placeholder="Naam — bijv. Charizard, Pikachu ...">
+      <input type="text" id="searchNum" class="num-input" placeholder="Nr — bijv. 4/102">
       <button class="btn-red" id="searchBtn">Zoek</button>
     </div>
     <div class="status"><span class="spinner" id="apiSpin"></span><span id="apiStatus"></span></div>
-    <p class="note">Tip: OCR vult dit veld automatisch na een scan. Je kunt de naam altijd corrigeren en opnieuw zoeken.</p>
+    <p class="note">Combineer <b>naam + nummer</b> voor de exacte versie (het nummer staat onderaan de kaart, bv. <b>4/102</b>). Eén veld invullen mag ook. OCR vult beide velden automatisch na een scan.</p>
   </div>
 
   <!-- RESULTS -->
@@ -227,15 +229,14 @@
 
   <footer>
     Prijsdata via <a class="src-link" href="https://pokemontcg.io" target="_blank">pokemontcg.io</a> —
-    Cardmarket-prijzen in € (origineel), TCGplayer-prijzen omgerekend van $ naar €.<br>
-    USD→EUR koers: <span id="rateInfo">vast op 0,92</span>. Officiële bronnen:
+    Cardmarket-prijzen in <b>€</b>, TCGplayer-prijzen in <b>$</b> (beide origineel).<br>
+    Namencorrectie via <a class="src-link" href="https://pokeapi.co" target="_blank">PokéAPI</a>. Officiële bronnen:
     <a class="src-link" href="https://www.cardmarket.com/en/Pokemon" target="_blank">Cardmarket</a> ·
     <a class="src-link" href="https://www.tcgplayer.com/" target="_blank">TCGplayer</a>.
   </footer>
 </div>
 
 <script>
-const USD_TO_EUR = 0.92; // geschatte koers voor TCGplayer-omrekening
 const $ = id => document.getElementById(id);
 
 const video = $('video'), canvas = $('snapshot');
@@ -462,20 +463,23 @@ $('manualScan').addEventListener('click', async () => {
   }
 });
 
-// ---------- Beslissen wat we opzoeken (naam eerst) ----------
+// ---------- Beslissen wat we opzoeken (naam + nummer gecombineerd) ----------
 function doLookup(p){
-  if(p.name && p.raw){
-    $('ocrStatus').textContent = '✅ ' + p.name + ' · ' + p.raw + ' — opzoeken...';
-    lookupByNumber(p.num, p.total, p.raw, p.name);
-  }else if(p.name){
-    $('ocrStatus').textContent = '✅ Naam: ' + p.name + ' — kies hieronder de juiste versie.';
-    $('searchInput').value = p.name;
-    runSearch(p.name);
-  }else if(p.raw){
-    $('ocrStatus').textContent = '✅ Nummer ' + p.raw + ' — opzoeken...';
-    lookupByNumber(p.num, p.total, p.raw, null);
+  // naam corrigeren tegen de echte Pokémon-namenlijst
+  const corrected = correctName(p.name);
+  if(corrected && corrected !== p.name){
+    $('dbgParsed').textContent += '   →  gecorrigeerd: ' + corrected;
+  }
+  // velden vullen zodat de gebruiker kan bijsturen
+  if(corrected)  $('searchInput').value = corrected;
+  if(p.raw)      $('searchNum').value   = p.raw;
+
+  if(corrected || p.raw){
+    const bits = [corrected||'', p.raw?('#'+p.raw):''].filter(Boolean).join(' ');
+    $('ocrStatus').textContent = '✅ ' + bits + ' — opzoeken (kies hieronder de juiste versie)...';
+    doSearch(corrected||'', p.num, p.total);
   }else{
-    $('ocrStatus').textContent = '🤔 Naam/nummer niet leesbaar. Houd de kaart dichterbij, scherp en bij goed licht — of typ de naam hieronder.';
+    $('ocrStatus').textContent = '🤔 Naam/nummer niet leesbaar. Houd de kaart dichterbij, scherp en bij goed licht — of typ naam/nummer hieronder.';
   }
 }
 
@@ -488,54 +492,57 @@ $('retry').addEventListener('click', () => {
 });
 
 // ---------- Zoeken via pokemontcg.io ----------
-$('searchBtn').addEventListener('click', () => runSearch($('searchInput').value.trim()));
-$('searchInput').addEventListener('keydown', e => { if(e.key==='Enter') runSearch($('searchInput').value.trim()); });
+$('searchBtn').addEventListener('click', () => runSearch());
+$('searchInput').addEventListener('keydown', e => { if(e.key==='Enter') runSearch(); });
+$('searchNum').addEventListener('keydown', e => { if(e.key==='Enter') runSearch(); });
 
 function eur(v){ return v==null ? null : '€ ' + v.toFixed(2).replace('.',','); }
+function usd(v){ return v==null ? null : '$ ' + v.toFixed(2); }
 
 // ---------- Opzoeken via kaartnummer + settotaal (uniek), naam als extra filter ----------
-async function lookupByNumber(num, total, raw, name){
+// Parse een nummer-invoer zoals "083/094", "4 / 102" of "83" -> {num,total}
+function parseNumStr(s){
+  if(!s) return { num:null, total:null };
+  const t = s.replace(/\s+/g,'');
+  const m = t.match(/(\d{1,4})\/(\d{1,4})/) || t.match(/(\d{1,4})/);
+  if(!m) return { num:null, total:null };
+  return { num: parseInt(m[1],10), total: m[2] ? parseInt(m[2],10) : null };
+}
+
+// Hoofd-zoekfunctie: combineer naam + nummer + settotaal
+async function doSearch(name, num, total){
   $('apiSpin').classList.add('on');
-  $('apiStatus').textContent = 'Kaart ' + raw + ' opzoeken...';
   $('results').innerHTML = '';
-  // varianten: nummer met en zonder voorloopnullen, total als printedTotal of total
-  const numVariants = [String(num), String(num).padStart(3,'0')];
-  const totalFields = ['set.printedTotal', 'set.total'];
+  const label = [ name||'', (num!=null ? ('#'+num+(total?('/'+total):'')) : '') ].filter(Boolean).join('  ');
+  $('apiStatus').textContent = 'Zoeken: ' + (label||'—') + ' ...';
   try{
+    const parts = [];
+    if(name)      parts.push('name:"' + name.replace(/"/g,'') + '"');
+    if(num!=null) parts.push('(number:' + num + ' OR number:' + String(num).padStart(3,'0') + ')');
     let cards = [];
-    for(const tf of totalFields){
-      for(const nv of numVariants){
-        const q = `number:${nv} ${tf}:${total}`;
-        const url = 'https://api.pokemontcg.io/v2/cards?q='+encodeURIComponent(q)+'&pageSize=20';
-        const res = await fetch(url);
-        if(!res.ok) continue;
-        const j = await res.json();
-        if(j.data && j.data.length){ cards = j.data; break; }
-      }
-      if(cards.length) break;
+    if(parts.length){
+      const q = parts.join(' ');
+      const url = 'https://api.pokemontcg.io/v2/cards?q='+encodeURIComponent(q)+'&orderBy=-set.releaseDate&pageSize=40';
+      const res = await fetch(url);
+      if(res.ok){ const j = await res.json(); cards = j.data || []; }
     }
-
-    // Als de naam ook gelezen is: gebruik die om te verfijnen
-    const firstWord = name ? name.toLowerCase().split(' ')[0] : '';
-    if(cards.length > 1 && firstWord.length >= 3){
-      const filtered = cards.filter(c => c.name.toLowerCase().includes(firstWord));
-      if(filtered.length) cards = filtered;
+    // verfijn op settotaal (de "/094") indien opgegeven
+    if(total!=null && cards.length){
+      const f = cards.filter(c => c.set && (c.set.printedTotal==total || c.set.total==total));
+      if(f.length) cards = f;
     }
-
     $('apiSpin').classList.remove('on');
-
     if(!cards.length){
-      // terugval: zoek op naam als die wél gelezen is
-      if(name && name.length >= 3){
-        $('apiStatus').textContent = 'Nummer ' + raw + ' niet gevonden — zoeken op naam "' + name + '"...';
-        runSearch(name);
-        return;
+      // terugval: combinatie faalde -> probeer alleen op naam
+      if(name && num!=null){
+        $('apiStatus').textContent = 'Combinatie niet gevonden — zoeken op alleen de naam...';
+        return doSearch(name, null, null);
       }
-      $('apiStatus').textContent = 'Geen exacte match voor ' + raw + '. Typ eventueel de naam handmatig.';
-      $('results').innerHTML = '<div class="empty">Niets gevonden voor nummer '+raw+' 😕</div>';
+      $('apiStatus').textContent = 'Niets gevonden voor: ' + (label||'—') + '.';
+      $('results').innerHTML = '<div class="empty">Niets gevonden 😕 — controleer naam/nummer.</div>';
       return;
     }
-    $('apiStatus').textContent = cards.length + ' kaart(en) gevonden voor ' + raw + (name?(' · '+name):'') + '.';
+    $('apiStatus').textContent = cards.length + ' kaart(en) gevonden' + (label?(' voor ' + label):'') + '.';
     renderCards(cards);
   }catch(e){
     $('apiSpin').classList.remove('on');
@@ -543,30 +550,53 @@ async function lookupByNumber(num, total, raw, name){
   }
 }
 
-async function runSearch(query){
-  if(!query){ $('apiStatus').textContent='Typ eerst een kaartnaam.'; return; }
-  $('apiSpin').classList.add('on');
-  $('apiStatus').textContent = 'Zoeken naar "' + query + '"...';
-  $('results').innerHTML = '';
+// Zoeken vanuit de UI: leest beide velden
+function runSearch(){
+  const name = $('searchInput').value.trim();
+  const { num, total } = parseNumStr($('searchNum').value.trim());
+  if(!name && num==null){ $('apiStatus').textContent = 'Vul een naam en/of nummer in.'; return; }
+  doSearch(name, num, total);
+}
+
+// ---------- Naam-correctie tegen de echte Pokémon-namenlijst (PokéAPI) ----------
+let pokeNames = [];
+(async function loadPokeNames(){
   try{
-    const url = 'https://api.pokemontcg.io/v2/cards?q=name:"'+encodeURIComponent(query)+
-                '"&orderBy=-set.releaseDate&pageSize=12';
-    const res = await fetch(url);
-    if(!res.ok) throw new Error('API status '+res.status);
-    const json = await res.json();
-    $('apiSpin').classList.remove('on');
-    const cards = json.data || [];
-    if(!cards.length){
-      $('apiStatus').textContent = 'Geen kaarten gevonden voor "'+query+'". Probeer een andere spelling.';
-      $('results').innerHTML = '<div class="empty">Niets gevonden 😕</div>';
-      return;
+    const res = await fetch('https://pokeapi.co/api/v2/pokemon?limit=2000');
+    const j = await res.json();
+    pokeNames = (j.results||[]).map(r => r.name);   // bv. "buneary", "raichu-alola"
+  }catch(e){ /* zonder lijst: geen correctie, niet erg */ }
+})();
+
+function levenshtein(a, b){
+  const m=a.length, n=b.length;
+  if(!m) return n; if(!n) return m;
+  const dp = new Array(n+1); for(let j=0;j<=n;j++) dp[j]=j;
+  for(let i=1;i<=m;i++){
+    let prev=dp[0]; dp[0]=i;
+    for(let j=1;j<=n;j++){
+      const tmp=dp[j];
+      dp[j]=Math.min(dp[j]+1, dp[j-1]+1, prev+(a[i-1]===b[j-1]?0:1));
+      prev=tmp;
     }
-    $('apiStatus').textContent = cards.length + ' kaart(en) gevonden.';
-    renderCards(cards);
-  }catch(e){
-    $('apiSpin').classList.remove('on');
-    $('apiStatus').textContent = '⚠️ Fout bij ophalen: ' + e.message;
   }
+  return dp[n];
+}
+
+// Corrigeer de OCR-naam naar de dichtstbijzijnde echte Pokémon-naam
+function correctName(raw){
+  if(!raw || !pokeNames.length) return raw;
+  const first = raw.toLowerCase().split(' ')[0].replace(/[^a-z]/g,'');
+  if(first.length < 3) return raw;
+  let best=null, bestD=99;
+  for(const n of pokeNames){
+    const base = n.split('-')[0];
+    const d = levenshtein(first, base);
+    if(d < bestD){ bestD=d; best=base; if(d===0) break; }
+  }
+  const tol = Math.max(1, Math.floor(first.length*0.34));   // ~1/3 mag afwijken
+  if(best && bestD <= tol) return best.charAt(0).toUpperCase() + best.slice(1);
+  return raw;
 }
 
 function renderCards(cards){
@@ -579,7 +609,7 @@ function renderCards(cards){
       const p = c.cardmarket.prices;
       cmVal = p.trendPrice ?? p.averageSellPrice ?? p.avg30 ?? p.avg7 ?? null;
     }
-    // TCGplayer (USD -> EUR)
+    // TCGplayer (in USD, ongewijzigd)
     let tcgUsd = null;
     if(c.tcgplayer && c.tcgplayer.prices){
       for(const k of Object.keys(c.tcgplayer.prices)){
@@ -588,7 +618,6 @@ function renderCards(cards){
         if(v!=null){ tcgUsd = v; break; }
       }
     }
-    const tcgEur = tcgUsd!=null ? tcgUsd * USD_TO_EUR : null;
 
     const cmLink = c.cardmarket && c.cardmarket.url ? c.cardmarket.url : 'https://www.cardmarket.com/en/Pokemon';
     const tcgLink = c.tcgplayer && c.tcgplayer.url ? c.tcgplayer.url : 'https://www.tcgplayer.com/';
@@ -630,8 +659,8 @@ function renderCards(cards){
             <span class="val">${eur(cmVal) ?? '—'}</span>
           </div>
           <div class="price">
-            <span class="lbl">TCGplayer ≈</span>
-            <span class="val small">${eur(tcgEur) ?? '—'}</span>
+            <span class="lbl">TCGplayer</span>
+            <span class="val small">${usd(tcgUsd) ?? '—'}</span>
           </div>
           <div style="display:flex;justify-content:space-between;margin-top:4px">
             <a class="src-link" href="${cmLink}" target="_blank">Cardmarket →</a>
@@ -643,7 +672,6 @@ function renderCards(cards){
   });
 }
 
-$('rateInfo').textContent = 'vast op ' + USD_TO_EUR.toString().replace('.',',');
 </script>
 </body>
 </html>
