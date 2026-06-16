@@ -168,6 +168,29 @@
   .src-link:hover{text-decoration:underline;color:#7fb2ff}
 
   .empty{text-align:center;color:var(--muted);padding:30px}
+
+  /* toevoegen-knop op resultaatkaart */
+  .add-btn{margin-top:8px;width:100%;background:linear-gradient(var(--good),#1e9e54);color:#fff;
+    border:none;border-radius:10px;padding:10px;font-weight:700;cursor:pointer}
+  .add-btn.added{background:linear-gradient(var(--poke-blue),var(--poke-blue-dark))}
+
+  /* collectie-paneel */
+  .coll-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .coll-actions{display:flex;gap:8px}
+  .mini-btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:var(--txt);
+    border-radius:8px;padding:6px 10px;font-size:.8rem;font-weight:700;cursor:pointer}
+  .mini-btn:hover{background:rgba(255,255,255,.2)}
+  .coll-stats{margin:10px 0;color:var(--muted);font-size:.9rem}
+  .coll-stats b{color:var(--good);font-size:1.05rem}
+  .coll-item{position:relative}
+  .qty-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}
+  .qty-ctrl{display:flex;align-items:center;gap:8px}
+  .qty-ctrl button{width:30px;height:30px;border:none;border-radius:8px;font-size:1.1rem;font-weight:800;
+    cursor:pointer;background:var(--card-2);color:var(--txt)}
+  .qty-ctrl .qty{min-width:26px;text-align:center;font-weight:800}
+  .rm-btn{background:rgba(238,21,21,.25);border:1px solid rgba(238,21,21,.5);color:#ffb3b3;
+    border-radius:8px;padding:5px 10px;font-size:.78rem;font-weight:700;cursor:pointer}
+  .rm-btn:hover{background:rgba(238,21,21,.5);color:#fff}
   .note{font-size:.78rem;color:var(--muted);margin-top:8px;line-height:1.5}
 
   /* OCR debug */
@@ -226,6 +249,20 @@
     <div class="results" id="results">
       <div class="empty">Nog geen resultaten. Scan een kaart of typ een naam.</div>
     </div>
+  </div>
+
+  <!-- COLLECTION -->
+  <div class="panel">
+    <div class="coll-head">
+      <h2>📚 Mijn collectie</h2>
+      <div class="coll-actions">
+        <button class="mini-btn" id="exportColl" title="Back-up downloaden">⬇︎ Export</button>
+        <button class="mini-btn" id="importColl" title="Back-up inladen">⬆︎ Import</button>
+        <input type="file" id="importFile" accept="application/json" style="display:none">
+      </div>
+    </div>
+    <div class="coll-stats" id="collStats">Nog geen kaarten in je collectie.</div>
+    <div class="results" id="collection"></div>
   </div>
 
   <footer>
@@ -725,10 +762,134 @@ function renderCards(cards){
             <a class="src-link" href="${tcgLink}" target="_blank">TCGplayer →</a>
           </div>
         </div>
+        <button class="add-btn" type="button">➕ Toevoegen aan collectie</button>
       </div>`;
+    const entry = {
+      id: c.id, name: c.name,
+      setName: c.set ? c.set.name : '',
+      number: c.number || '',
+      total: c.set ? (c.set.printedTotal || c.set.total) : '',
+      image: c.images ? (c.images.small || c.images.large) : '',
+      rarity: rarity, cmEur: cmVal, tcgUsd: tcgUsd
+    };
+    const addBtn = el.querySelector('.add-btn');
+    addBtn.addEventListener('click', () => addToCollection(entry, addBtn));
     wrap.appendChild(el);
   });
 }
+
+// ---------- Collectie (lokaal opgeslagen in de browser) ----------
+const COLL_KEY = 'pokemon_collection_v1';
+let collection = loadCollection();
+
+function loadCollection(){
+  try { return JSON.parse(localStorage.getItem(COLL_KEY)) || {}; } catch(e){ return {}; }
+}
+function saveCollection(){
+  try { localStorage.setItem(COLL_KEY, JSON.stringify(collection)); } catch(e){}
+}
+
+function addToCollection(entry, btn){
+  if(!entry.id) return;
+  if(collection[entry.id]) collection[entry.id].qty += 1;
+  else collection[entry.id] = Object.assign({}, entry, { qty:1 });
+  saveCollection();
+  renderCollection();
+  if(btn){
+    const q = collection[entry.id].qty;
+    btn.classList.add('added');
+    btn.textContent = '✓ In collectie (' + q + ')';
+    setTimeout(() => { btn.classList.remove('added'); btn.textContent = '➕ Toevoegen aan collectie'; }, 1600);
+  }
+}
+function changeQty(id, delta){
+  if(!collection[id]) return;
+  collection[id].qty += delta;
+  if(collection[id].qty <= 0) delete collection[id];
+  saveCollection();
+  renderCollection();
+}
+function removeFromCollection(id){
+  if(collection[id] && !confirm('"' + collection[id].name + '" uit je collectie verwijderen?')) return;
+  delete collection[id];
+  saveCollection();
+  renderCollection();
+}
+
+function renderCollection(){
+  const wrap = $('collection');
+  const items = Object.values(collection);
+  if(!items.length){
+    $('collStats').textContent = 'Nog geen kaarten in je collectie.';
+    wrap.innerHTML = '<div class="empty">Voeg kaarten toe met de ➕ knop bij een zoekresultaat.</div>';
+    return;
+  }
+  const totalCards = items.reduce((s,i) => s + i.qty, 0);
+  const totalEur   = items.reduce((s,i) => s + (i.cmEur||0)*i.qty, 0);
+  $('collStats').innerHTML = '<b>' + totalCards + '</b> kaart' + (totalCards===1?'':'en') +
+    ' · ' + items.length + ' uniek · totale waarde (Cardmarket): <b>' + eur(totalEur) + '</b>';
+  wrap.innerHTML = '';
+  items.slice().reverse().forEach(it => {
+    const el = document.createElement('div');
+    el.className = 'result-card coll-item';
+    el.innerHTML = `
+      <img src="${it.image}" alt="${it.name}" loading="lazy">
+      <div class="rc-body">
+        <div class="rc-name">${it.name}</div>
+        <div class="rc-meta">${it.setName||''} · #${it.number||'?'}/${it.total||'?'}</div>
+        ${it.rarity?`<div class="chips"><span class="chip rarity-chip">${it.rarity}</span></div>`:''}
+        <div class="price-block">
+          <div class="price"><span class="lbl">Cardmarket</span><span class="val">${eur(it.cmEur) ?? '—'}</span></div>
+          <div class="price"><span class="lbl">TCGplayer</span><span class="val small">${usd(it.tcgUsd) ?? '—'}</span></div>
+        </div>
+        <div class="qty-bar">
+          <div class="qty-ctrl">
+            <button type="button" data-act="dec">−</button>
+            <span class="qty">${it.qty}</span>
+            <button type="button" data-act="inc">+</button>
+          </div>
+          <button type="button" class="rm-btn" data-act="rm">Verwijderen</button>
+        </div>
+      </div>`;
+    el.querySelector('[data-act=dec]').addEventListener('click', () => changeQty(it.id, -1));
+    el.querySelector('[data-act=inc]').addEventListener('click', () => changeQty(it.id, 1));
+    el.querySelector('[data-act=rm]').addEventListener('click', () => removeFromCollection(it.id));
+    wrap.appendChild(el);
+  });
+}
+
+// Export / import (back-up als JSON-bestand)
+$('exportColl').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(collection, null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'pokemon-collectie.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+$('importColl').addEventListener('click', () => $('importFile').click());
+$('importFile').addEventListener('change', e => {
+  const file = e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      let n = 0;
+      for(const id in data){
+        if(!data[id] || !data[id].id) continue;
+        if(collection[id]) collection[id].qty += (data[id].qty || 1);
+        else collection[id] = data[id];
+        n++;
+      }
+      saveCollection(); renderCollection();
+      $('collStats').innerHTML += ' &nbsp;✓ ' + n + ' geïmporteerd';
+    } catch(err){ alert('Ongeldig back-upbestand.'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+renderCollection();
 
 </script>
 </body>
