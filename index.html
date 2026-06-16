@@ -193,6 +193,29 @@
   .rm-btn:hover{background:rgba(238,21,21,.5);color:#fff}
   .note{font-size:.78rem;color:var(--muted);margin-top:8px;line-height:1.5}
 
+  /* tabs */
+  .tabs{display:flex;gap:8px;margin-bottom:18px}
+  .tab{flex:1;padding:12px;border:2px solid rgba(255,203,5,.25);background:var(--card);color:var(--muted);
+    border-radius:12px;font-weight:800;font-size:.95rem;cursor:pointer;transition:filter .15s}
+  .tab.active{background:linear-gradient(var(--poke-red),var(--poke-red-dark));color:#fff;border-color:transparent}
+  .tab-count{display:inline-block;background:rgba(0,0,0,.3);border-radius:20px;padding:1px 8px;font-size:.8rem;margin-left:2px}
+
+  /* afdrukbare kaartlijst */
+  #printArea{display:none}
+  .pr-title{font-size:22px;font-weight:bold;margin-bottom:2px}
+  .pr-sub{font-size:12px;color:#333;margin-bottom:14px}
+  .pr-group{font-size:15px;font-weight:bold;margin:16px 0 4px;border-bottom:2px solid #000;padding-bottom:2px}
+  .pr-table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:6px}
+  .pr-table th,.pr-table td{border:1px solid #999;padding:4px 6px;text-align:left}
+  .pr-table th{background:#eee}
+  .pr-table td.c{text-align:center;width:46px}
+  .pr-total{margin-top:12px;font-weight:bold;font-size:14px}
+  @media print{
+    body{background:#fff}
+    .wrap > *:not(#printArea){ display:none !important; }
+    #printArea{ display:block !important; color:#000; font-family:Arial,Helvetica,sans-serif; }
+  }
+
   /* OCR debug */
   .debug{margin-top:10px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);
          border-radius:10px;padding:8px 10px;font-size:.75rem}
@@ -211,6 +234,15 @@
     <h1>Kaart Scanner</h1>
     <div class="subtitle">Scan een Pokémon-kaart en bekijk de waarde · prijzen in euro €</div>
   </header>
+
+  <!-- TABS -->
+  <nav class="tabs">
+    <button class="tab active" id="tabScanner">📷 Scanner</button>
+    <button class="tab" id="tabCollection">📚 Mijn collectie <span class="tab-count" id="tabCount"></span></button>
+  </nav>
+
+  <!-- ===== SCANNER VIEW ===== -->
+  <div id="view-scanner">
 
   <!-- WEBCAM -->
   <div class="panel">
@@ -251,11 +283,15 @@
     </div>
   </div>
 
-  <!-- COLLECTION -->
+  </div><!-- ===== /SCANNER VIEW ===== -->
+
+  <!-- ===== COLLECTION VIEW ===== -->
+  <div id="view-collection" class="hidden">
   <div class="panel">
     <div class="coll-head">
       <h2>📚 Mijn collectie</h2>
       <div class="coll-actions">
+        <button class="mini-btn" id="printColl" title="Kaartlijst afdrukken">🖨️ Afdrukken</button>
         <button class="mini-btn" id="exportColl" title="Back-up downloaden">⬇︎ Export</button>
         <button class="mini-btn" id="importColl" title="Back-up inladen">⬆︎ Import</button>
         <input type="file" id="importFile" accept="application/json" style="display:none">
@@ -264,6 +300,10 @@
     <div class="coll-stats" id="collStats">Nog geen kaarten in je collectie.</div>
     <div class="results" id="collection"></div>
   </div>
+  </div><!-- ===== /COLLECTION VIEW ===== -->
+
+  <!-- Afdrukbare kaartlijst (alleen zichtbaar bij printen) -->
+  <div id="printArea"></div>
 
   <footer>
     Prijsdata via <a class="src-link" href="https://pokemontcg.io" target="_blank">pokemontcg.io</a> —
@@ -767,10 +807,11 @@ function renderCards(cards){
     const entry = {
       id: c.id, name: c.name,
       setName: c.set ? c.set.name : '',
+      setPtcgo: c.set ? (c.set.ptcgoCode || '') : '',
       number: c.number || '',
       total: c.set ? (c.set.printedTotal || c.set.total) : '',
       image: c.images ? (c.images.small || c.images.large) : '',
-      rarity: rarity, cmEur: cmVal, tcgUsd: tcgUsd
+      rarity: rarity, supertype: c.supertype || '', cmEur: cmVal, tcgUsd: tcgUsd
     };
     const addBtn = el.querySelector('.add-btn');
     addBtn.addEventListener('click', () => addToCollection(entry, addBtn));
@@ -820,12 +861,14 @@ function renderCollection(){
   const wrap = $('collection');
   const items = Object.values(collection);
   if(!items.length){
+    $('tabCount').textContent = '';
     $('collStats').textContent = 'Nog geen kaarten in je collectie.';
     wrap.innerHTML = '<div class="empty">Voeg kaarten toe met de ➕ knop bij een zoekresultaat.</div>';
     return;
   }
   const totalCards = items.reduce((s,i) => s + i.qty, 0);
   const totalEur   = items.reduce((s,i) => s + (i.cmEur||0)*i.qty, 0);
+  $('tabCount').textContent = totalCards;
   $('collStats').innerHTML = '<b>' + totalCards + '</b> kaart' + (totalCards===1?'':'en') +
     ' · ' + items.length + ' uniek · totale waarde (Cardmarket): <b>' + eur(totalEur) + '</b>';
   wrap.innerHTML = '';
@@ -888,6 +931,67 @@ $('importFile').addEventListener('change', e => {
   reader.readAsText(file);
   e.target.value = '';
 });
+
+// ---------- Tabs (scanner ↔ collectie) ----------
+function showView(which){
+  const scan = which === 'scanner';
+  $('view-scanner').classList.toggle('hidden', !scan);
+  $('view-collection').classList.toggle('hidden', scan);
+  $('tabScanner').classList.toggle('active', scan);
+  $('tabCollection').classList.toggle('active', !scan);
+  window.scrollTo(0,0);
+}
+$('tabScanner').addEventListener('click', () => showView('scanner'));
+$('tabCollection').addEventListener('click', () => showView('collection'));
+
+// ---------- Afdrukbare kaartlijst (gegroepeerd Pokémon / Trainer / Energy) ----------
+function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function buildPrint(){
+  const area = $('printArea');
+  const items = Object.values(collection);
+  if(!items.length){
+    area.innerHTML = '<div class="pr-title">Mijn Pokémon-kaartlijst</div><p>Geen kaarten in de collectie.</p>';
+    return;
+  }
+  // groepeer op soort
+  const groups = {};
+  items.forEach(it => {
+    let g = it.supertype || 'Overig';
+    if(/pok/i.test(g)) g = 'Pokémon';
+    else if(/train/i.test(g)) g = 'Trainer';
+    else if(/energ/i.test(g)) g = 'Energy';
+    else g = 'Overig';
+    (groups[g] = groups[g] || []).push(it);
+  });
+  const order = ['Pokémon','Trainer','Energy','Overig'].filter(g => groups[g]);
+  const totalCards = items.reduce((s,i) => s + i.qty, 0);
+  const totalEur   = items.reduce((s,i) => s + (i.cmEur||0)*i.qty, 0);
+  const today = new Date().toLocaleDateString('nl-BE');
+
+  let html = '<div class="pr-title">Mijn Pokémon-kaartlijst</div>' +
+    '<div class="pr-sub">' + today + ' · ' + totalCards + ' kaarten · ' + items.length +
+    ' uniek · totale waarde (Cardmarket): ' + eur(totalEur) + '</div>';
+
+  order.forEach(g => {
+    const arr = groups[g].slice().sort((a,b) => a.name.localeCompare(b.name));
+    const sub = arr.reduce((s,i) => s + i.qty, 0);
+    html += '<div class="pr-group">' + g + ' (' + sub + ')</div>' +
+      '<table class="pr-table"><thead><tr>' +
+      '<th class="c">Aantal</th><th>Naam</th><th>Set</th><th class="c">Nr</th><th>Rarity</th><th class="c">✓</th>' +
+      '</tr></thead><tbody>';
+    arr.forEach(it => {
+      const set = it.setPtcgo ? it.setPtcgo : (it.setName || '');
+      html += '<tr><td class="c">' + it.qty + '</td><td>' + esc(it.name) + '</td><td>' + esc(set) +
+        '</td><td class="c">' + esc(it.number||'') + '/' + esc(it.total||'') + '</td><td>' +
+        esc(it.rarity||'') + '</td><td class="c"></td></tr>';
+    });
+    html += '</tbody></table>';
+  });
+  html += '<div class="pr-total">Totaal: ' + totalCards + ' kaarten · waarde ' + eur(totalEur) + '</div>';
+  area.innerHTML = html;
+}
+$('printColl').addEventListener('click', () => { buildPrint(); window.print(); });
 
 renderCollection();
 
