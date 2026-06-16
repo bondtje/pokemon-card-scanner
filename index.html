@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pokémon Kaart Scanner</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root{
+    --poke-red:#ee1515;
+    --poke-red-dark:#b00d0d;
+    --poke-yellow:#ffcb05;
+    --poke-blue:#3d7dca;
+    --poke-blue-dark:#003a70;
+    --bg:#0e1230;
+    --card:#171c45;
+    --card-2:#1f2658;
+    --txt:#f5f6ff;
+    --muted:#9aa3d4;
+    --good:#2ecc71;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    background:
+      radial-gradient(circle at 20% 10%, rgba(61,125,202,.25), transparent 40%),
+      radial-gradient(circle at 80% 90%, rgba(238,21,21,.25), transparent 45%),
+      var(--bg);
+    color:var(--txt);
+    min-height:100vh;
+    padding:20px;
+  }
+  .wrap{max-width:920px;margin:0 auto}
+
+  header{
+    text-align:center;
+    margin-bottom:24px;
+    position:relative;
+  }
+  .pokeball{
+    width:54px;height:54px;border-radius:50%;
+    background:linear-gradient(var(--poke-red) 0 50%, #fff 50% 100%);
+    border:4px solid #111;position:relative;
+    display:inline-block;vertical-align:middle;margin-right:12px;
+    box-shadow:0 6px 18px rgba(238,21,21,.4);
+    animation:spin 6s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .pokeball::before{
+    content:"";position:absolute;top:50%;left:0;right:0;height:4px;background:#111;transform:translateY(-50%);
+  }
+  .pokeball::after{
+    content:"";position:absolute;top:50%;left:50%;width:16px;height:16px;border-radius:50%;
+    background:#fff;border:4px solid #111;transform:translate(-50%,-50%);
+  }
+  h1{
+    display:inline-block;vertical-align:middle;
+    font-size:2rem;font-weight:800;letter-spacing:.5px;
+    color:var(--poke-yellow);
+    text-shadow:3px 3px 0 var(--poke-blue-dark), -1px -1px 0 #000;
+    -webkit-text-stroke:1px var(--poke-blue-dark);
+  }
+  .subtitle{color:var(--muted);margin-top:8px;font-size:.9rem}
+
+  .panel{
+    background:linear-gradient(160deg,var(--card),var(--card-2));
+    border:2px solid rgba(255,203,5,.25);
+    border-radius:18px;
+    padding:18px;
+    margin-bottom:18px;
+    box-shadow:0 10px 30px rgba(0,0,0,.35);
+  }
+  .panel h2{font-size:1rem;color:var(--poke-yellow);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px}
+
+  video,#snapshot{
+    width:100%;height:100%;border-radius:12px;background:#000;
+    display:block;object-fit:cover;
+  }
+  /* vaste, kaart-achtige verhouding; vult altijd (geen zwarte balken) */
+  .cam-frame{position:relative;width:100%;max-width:380px;aspect-ratio:3/4;max-height:62vh;margin:0 auto;overflow:hidden;border-radius:12px}
+  .reticle{
+    position:absolute;inset:5% 14%;
+    border:3px dashed rgba(255,255,255,.35);border-radius:12px;pointer-events:none;
+  }
+  /* naam-zone (boven) en nummer-zone (onder) die de OCR daadwerkelijk leest */
+  .reticle::before, .reticle::after{
+    content:"";position:absolute;border:2px solid var(--poke-yellow);
+    border-radius:6px;background:rgba(255,203,5,.10);
+    font-size:.58rem;color:var(--poke-yellow);font-weight:700;
+    display:flex;align-items:flex-start;padding:1px 4px;
+  }
+  .reticle::before{content:"NAAM";left:2%;top:1.5%;width:70%;height:13%}
+  .reticle::after {content:"NR";  left:2%;top:88%; width:62%;height:11%}
+  .reticle span{
+    position:absolute;bottom:-24px;left:50%;transform:translateX(-50%);
+    font-size:.72rem;color:var(--poke-yellow);text-align:center;
+    background:rgba(0,0,0,.55);padding:2px 8px;border-radius:6px;white-space:nowrap;max-width:95vw;
+  }
+
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  button{
+    cursor:pointer;border:none;border-radius:10px;
+    padding:12px 18px;font-weight:700;font-size:.95rem;color:#fff;
+    transition:transform .1s, filter .2s;
+  }
+  button:active{transform:translateY(2px)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .btn-red{background:linear-gradient(var(--poke-red),var(--poke-red-dark))}
+  .btn-blue{background:linear-gradient(var(--poke-blue),var(--poke-blue-dark))}
+  .btn-yellow{background:linear-gradient(var(--poke-yellow),#e0a800);color:#3a2c00}
+
+  .search-row{display:flex;gap:10px;flex-wrap:wrap}
+  input[type=text]{
+    flex:1;min-width:200px;padding:12px 14px;border-radius:10px;border:2px solid rgba(255,255,255,.15);
+    background:rgba(0,0,0,.25);color:var(--txt);font-size:1rem;
+  }
+  input[type=text]:focus{outline:none;border-color:var(--poke-yellow)}
+
+  .status{
+    margin-top:12px;font-size:.9rem;color:var(--muted);min-height:20px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .spinner{
+    width:16px;height:16px;border:3px solid rgba(255,203,5,.3);border-top-color:var(--poke-yellow);
+    border-radius:50%;animation:spin .8s linear infinite;display:none;
+  }
+  .spinner.on{display:inline-block}
+
+  /* Results */
+  .results{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+  .result-card{
+    background:linear-gradient(165deg,#222a63,#161b40);
+    border:2px solid rgba(255,203,5,.3);border-radius:16px;overflow:hidden;
+    display:flex;flex-direction:column;
+    transition:transform .15s, box-shadow .15s;
+  }
+  .result-card:hover{transform:translateY(-4px);box-shadow:0 14px 30px rgba(0,0,0,.5)}
+  .result-card img{width:100%;display:block;background:#000}
+  .rc-body{padding:14px;display:flex;flex-direction:column;gap:8px;flex:1}
+  .rc-name{font-weight:800;font-size:1.05rem;color:#fff}
+  .rc-meta{font-size:.8rem;color:var(--muted)}
+  .rarity{display:inline-block;background:rgba(61,125,202,.3);color:#bcd4ff;padding:2px 8px;border-radius:6px;font-size:.72rem}
+
+  /* detail-chips */
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+  .chip{font-size:.7rem;padding:2px 8px;border-radius:20px;font-weight:700;
+        background:rgba(255,255,255,.1);color:#dfe4ff;border:1px solid rgba(255,255,255,.15)}
+  .chip.hp{background:rgba(46,204,113,.18);color:#9fffc8;border-color:rgba(46,204,113,.4)}
+  .chip.special{background:linear-gradient(90deg,#ffcb05,#ff8a00);color:#3a2c00;border:none}
+  .chip.holo{background:linear-gradient(90deg,#a18cd1,#fbc2eb);color:#2a1640;border:none}
+  .chip.altart{background:linear-gradient(90deg,#43cea2,#185a9d);color:#fff;border:none}
+  /* energie-types */
+  .type{color:#fff;border:none}
+  .t-Grass{background:#3fa34d}.t-Fire{background:#e8533f}.t-Water{background:#3d7dca}
+  .t-Lightning{background:#e6b800;color:#3a2c00}.t-Psychic{background:#a14ea1}
+  .t-Fighting{background:#b85c38}.t-Darkness{background:#3a3a4a}.t-Metal{background:#7a8a99}
+  .t-Fairy{background:#e87fb0}.t-Dragon{background:#9a7d2e}.t-Colorless{background:#b7b7c7;color:#222}
+  .rc-detail{font-size:.78rem;color:var(--muted);display:flex;justify-content:space-between;gap:6px}
+  .rc-detail b{color:#cfe6ff;font-weight:700}
+
+  .price-block{margin-top:auto;border-top:1px solid rgba(255,255,255,.1);padding-top:10px;display:flex;flex-direction:column;gap:6px}
+  .price{display:flex;justify-content:space-between;align-items:baseline}
+  .price .lbl{font-size:.8rem;color:var(--muted)}
+  .price .val{font-weight:800;font-size:1.15rem;color:var(--good)}
+  .price .val.small{font-size:.95rem;color:#cfe6ff}
+  .src-link{font-size:.78rem;color:var(--poke-blue);text-decoration:none}
+  .src-link:hover{text-decoration:underline;color:#7fb2ff}
+
+  .empty{text-align:center;color:var(--muted);padding:30px}
+  .note{font-size:.78rem;color:var(--muted);margin-top:8px;line-height:1.5}
+
+  /* OCR debug */
+  .debug{margin-top:10px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);
+         border-radius:10px;padding:8px 10px;font-size:.75rem}
+  .debug b{color:var(--poke-yellow);font-size:.7rem;letter-spacing:.5px;text-transform:uppercase}
+  .dbg-parsed{color:#9fffc8;margin:4px 0;font-weight:700}
+  .dbg-raw{color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:90px;
+           overflow:auto;margin:0;font-family:ui-monospace,Consolas,monospace;font-size:.72rem;line-height:1.35}
+  footer{text-align:center;color:var(--muted);font-size:.75rem;margin-top:24px;line-height:1.6}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="pokeball"></div>
+    <h1>Kaart Scanner</h1>
+    <div class="subtitle">Scan een Pokémon-kaart en bekijk de waarde · prijzen in euro €</div>
+  </header>
+
+  <!-- WEBCAM -->
+  <div class="panel">
+    <h2>📷 Webcam</h2>
+    <div class="cam-frame">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="snapshot" class="hidden"></canvas>
+      <div class="reticle" id="reticle"><span>Vul het kader met de kaart — naam in het bovenvak, nummer in het ondervak</span></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-red" id="startCam">Camera starten</button>
+      <button class="btn-yellow hidden" id="manualScan">📸 Scan kaart</button>
+      <button class="btn-blue hidden" id="switchCam">🔄 Wissel camera</button>
+      <button class="btn-blue hidden" id="retry">↺ Opnieuw scannen</button>
+    </div>
+    <div class="status"><span class="spinner" id="ocrSpin"></span><span id="ocrStatus">Klik op "Camera starten" om te beginnen.</span></div>
+    <div class="debug" id="debug"><b>OCR debug</b><div class="dbg-parsed" id="dbgParsed">—</div><pre class="dbg-raw" id="dbgRaw">(nog niets gelezen)</pre></div>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="panel">
+    <h2>🔎 Zoeken</h2>
+    <div class="search-row">
+      <input type="text" id="searchInput" placeholder="Bijv. Charizard, Pikachu VMAX ...">
+      <button class="btn-red" id="searchBtn">Zoek</button>
+    </div>
+    <div class="status"><span class="spinner" id="apiSpin"></span><span id="apiStatus"></span></div>
+    <p class="note">Tip: OCR vult dit veld automatisch na een scan. Je kunt de naam altijd corrigeren en opnieuw zoeken.</p>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="panel">
+    <h2>💰 Resultaten</h2>
+    <div class="results" id="results">
+      <div class="empty">Nog geen resultaten. Scan een kaart of typ een naam.</div>
+    </div>
+  </div>
+
+  <footer>
+    Prijsdata via <a class="src-link" href="https://pokemontcg.io" target="_blank">pokemontcg.io</a> —
+    Cardmarket-prijzen in € (origineel), TCGplayer-prijzen omgerekend van $ naar €.<br>
+    USD→EUR koers: <span id="rateInfo">vast op 0,92</span>. Officiële bronnen:
+    <a class="src-link" href="https://www.cardmarket.com/en/Pokemon" target="_blank">Cardmarket</a> ·
+    <a class="src-link" href="https://www.tcgplayer.com/" target="_blank">TCGplayer</a>.
+  </footer>
+</div>
+
+<script>
+const USD_TO_EUR = 0.92; // geschatte koers voor TCGplayer-omrekening
+const $ = id => document.getElementById(id);
+
+const video = $('video'), canvas = $('snapshot');
+let stream = null;
+let numWorker = null;     // OCR voor het kaartnummer (alleen cijfers + /)
+let nameWorker = null;    // OCR voor de kaartnaam (alleen letters)
+let ready = false;        // zijn beide workers geladen?
+let scanning = false;     // (gereserveerd) niet meer gebruikt sinds foto-modus
+
+// ---------- Tesseract workers init ----------
+// Een Pokémon-kaart leest het beste per zone: naam-strook boven, nummer-strook onder.
+// PSM 7 = "behandel als één tekstregel" → ideaal voor deze smalle stroken.
+async function initWorker(){
+  if(ready) return;
+  numWorker = await Tesseract.createWorker('eng');
+  await numWorker.setParameters({
+    tessedit_char_whitelist: '0123456789/',
+    tessedit_pageseg_mode: '7'
+  });
+  nameWorker = await Tesseract.createWorker('eng');
+  await nameWorker.setParameters({
+    tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'.- ",
+    tessedit_pageseg_mode: '7'
+  });
+  ready = true;
+}
+
+// ---------- Webcam / camerabeheer (werkt op pc én gsm) ----------
+let videoDevices = [], curCam = 0;
+
+async function startCamera(deviceId){
+  if(stream){ stream.getTracks().forEach(t => t.stop()); }
+  const v = deviceId ? { deviceId:{ exact:deviceId } } : { facingMode:{ ideal:'environment' } };
+  v.width  = { ideal:2560 };          // vraag hoge resolutie aan voor scherpe foto's
+  v.height = { ideal:1440 };
+  v.focusMode = 'continuous';         // autofocus waar ondersteund
+  stream = await navigator.mediaDevices.getUserMedia({ video:v, audio:false });
+  video.srcObject = stream;
+  await new Promise(r => { video.onloadedmetadata = () => { video.play(); r(); }; });
+}
+
+$('startCam').addEventListener('click', async () => {
+  try{
+    $('ocrStatus').textContent = 'Camera en OCR laden...';
+    await startCamera();                 // kiest op gsm automatisch de achtercamera
+    await initWorker();
+    // camera's pas opvraagbaar (met labels) nadat toestemming is gegeven
+    const all = await navigator.mediaDevices.enumerateDevices();
+    videoDevices = all.filter(d => d.kind === 'videoinput');
+    const active = stream.getVideoTracks()[0].getSettings().deviceId;
+    const idx = videoDevices.findIndex(d => d.deviceId === active);
+    if(idx >= 0) curCam = idx;
+    if(videoDevices.length > 1) $('switchCam').classList.remove('hidden');
+    $('startCam').classList.add('hidden');
+    startScanLoop();
+  }catch(e){
+    $('ocrStatus').textContent = '⚠️ Kan camera niet openen: ' + e.message;
+  }
+});
+
+$('switchCam').addEventListener('click', async () => {
+  if(videoDevices.length < 2) return;
+  curCam = (curCam + 1) % videoDevices.length;
+  stopScanLoop();
+  try{
+    await startCamera(videoDevices[curCam].deviceId);
+    canvas.classList.add('hidden'); video.classList.remove('hidden');
+    $('retry').classList.add('hidden'); $('reticle').classList.remove('hidden');
+    const label = videoDevices[curCam].label || ('Camera ' + (curCam+1));
+    $('ocrStatus').textContent = '🔄 Gewisseld naar: ' + label;
+    startScanLoop();
+  }catch(e){
+    $('ocrStatus').textContent = '⚠️ Camera wisselen mislukt: ' + e.message;
+  }
+});
+
+// Geen continue scan meer — we maken één scherpe foto en analyseren die.
+function startScanLoop(){
+  scanning = false;
+  $('manualScan').classList.remove('hidden');
+  $('ocrSpin').classList.remove('on');
+  $('ocrStatus').textContent = '📷 Vul het kader met de kaart (recht, scherp, goed licht) en klik op "📸 Scan kaart".';
+}
+
+function stopScanLoop(){
+  scanning = false;
+  $('ocrSpin').classList.remove('on');
+}
+
+// Het kader (.reticle) staat op inset 5% boven/onder, 14% links/rechts.
+// We gaan ervan uit dat de kaart het kader ongeveer vult, en lezen alleen
+// de NAAM-strook (bovenaan) en de NUMMER-strook (onderaan) — niet de illustratie.
+const RET = { top:0.05, bottom:0.95, left:0.14, right:0.86 };
+// zones, uitgedrukt 0..1 binnen het kader:
+const NAME_ZONE = { x:0.02, y:0.015, w:0.70, h:0.13 };   // naam: links-boven
+const NUM_ZONE  = { x:0.02, y:0.88,  w:0.62, h:0.11 };   // nummer: links-onder
+
+// Maak één stilstaande foto op volle videoresolutie (in de zichtbare #snapshot canvas).
+function captureStill(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  canvas.width = vw; canvas.height = vh;
+  canvas.getContext('2d').drawImage(video, 0, 0, vw, vh);
+  return canvas;
+}
+
+// Knip + verscherp een zone uit het stilstaande beeld. Het beeld wordt met
+// object-fit:cover getoond (gecropt), dus we rekenen het zichtbare gebied terug
+// naar bronpixels — werkt op elke camera/oriëntatie.
+function cropZone(src, z, scale){
+  const vw = src.width, vh = src.height;
+  if(!vw) return null;
+  const frame = document.querySelector('.cam-frame');
+  const Cw = frame.clientWidth, Ch = frame.clientHeight;
+  const cover = Math.max(Cw/vw, Ch/vh);
+  const visW = Cw/cover, visH = Ch/cover;          // zichtbaar deel van de bron (px)
+  const offX = (vw - visW)/2, offY = (vh - visH)/2; // afgesneden randen
+  const rw = RET.right - RET.left, rh = RET.bottom - RET.top;
+  const fx = RET.left + z.x*rw, fy = RET.top + z.y*rh;
+  const sx = Math.max(0, Math.floor(offX + fx*visW));
+  const sy = Math.max(0, Math.floor(offY + fy*visH));
+  const sw = Math.floor(z.w * rw * visW);
+  const sh = Math.floor(z.h * rh * visH);
+  const c = document.createElement('canvas');
+  c.width = sw*scale; c.height = sh*scale;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  binarize(ctx, c.width, c.height);
+  return c;
+}
+
+// Zwart-wit maken met automatische Otsu-drempel (sterk betere OCR op tekst).
+function binarize(ctx, w, h){
+  const img = ctx.getImageData(0,0,w,h), d = img.data;
+  const total = w*h;
+  const gray = new Uint8Array(total);
+  const hist = new Array(256).fill(0);
+  for(let i=0,p=0;i<d.length;i+=4,p++){
+    const g = (0.3*d[i] + 0.59*d[i+1] + 0.11*d[i+2])|0;
+    gray[p] = g; hist[g]++;
+  }
+  // Otsu-drempel bepalen
+  let sum=0; for(let t=0;t<256;t++) sum += t*hist[t];
+  let sumB=0, wB=0, maxVar=0, thr=127;
+  for(let t=0;t<256;t++){
+    wB += hist[t]; if(!wB) continue;
+    const wF = total - wB; if(!wF) break;
+    sumB += t*hist[t];
+    const mB = sumB/wB, mF = (sum-sumB)/wF;
+    const v = wB*wF*(mB-mF)*(mB-mF);
+    if(v > maxVar){ maxVar=v; thr=t; }
+  }
+  // tekst moet donker op wit zijn; als de meeste pixels donker zijn -> inverteren
+  let dark=0; for(let p=0;p<total;p++) if(gray[p] < thr) dark++;
+  const invert = dark > total/2;
+  for(let i=0,p=0;i<d.length;i+=4,p++){
+    let isText = gray[p] < thr;
+    if(invert) isText = !isText;
+    const v = isText ? 0 : 255;
+    d[i]=d[i+1]=d[i+2]=v;
+  }
+  ctx.putImageData(img,0,0);
+}
+
+function cleanName(t){
+  let s = (t||'').replace(/\n/g,' ').replace(/[^A-Za-z'.\- ]/g,' ').replace(/\s+/g,' ').trim();
+  s = s.replace(/^(Basic|Stage\s*\d|Stage|GX|EX|V|VMAX|VSTAR)\s+/i,'').trim();
+  return s.length >= 3 ? s : '';
+}
+
+// Lees beide zones van de foto. Retourneert {num,total,raw,conf, name,nameConf, numText,nameText}
+async function readCardFromStill(src){
+  const out = { num:null,total:null,raw:null,conf:0, name:'',nameConf:0, numText:'',nameText:'' };
+  // 1) NAAM-zone (grote, goed leesbare tekst — stuurt de zoekopdracht)
+  const nameImg = cropZone(src, NAME_ZONE, 3);
+  if(nameImg){
+    const { data } = await nameWorker.recognize(nameImg);
+    out.nameText = (data.text||'').trim();
+    const nm = cleanName(out.nameText);
+    if(nm){ out.name = nm; out.nameConf = data.confidence||0; }
+  }
+  // 2) NUMMER-zone (klein — extra filter om de juiste versie te kiezen)
+  const numImg = cropZone(src, NUM_ZONE, 4);
+  if(numImg){
+    const { data } = await numWorker.recognize(numImg);
+    out.numText = (data.text||'').trim();
+    const m = out.numText.replace(/\s+/g,'').match(/(\d{1,4})\/(\d{1,4})/);
+    if(m){ out.num=parseInt(m[1],10); out.total=parseInt(m[2],10); out.raw=m[1]+'/'+m[2]; out.conf=data.confidence||0; }
+  }
+  return out;
+}
+
+// ---------- Live debug-weergave ----------
+function updateDebug(p){
+  $('dbgParsed').textContent =
+    'nr: ' + (p.raw||'—') + ' (' + Math.round(p.conf||0) + '%)   |   ' +
+    'naam: ' + (p.name||'—') + ' (' + Math.round(p.nameConf||0) + '%)';
+  $('dbgRaw').textContent =
+    'nummer-zone: "' + (p.numText||'') + '"\n' +
+    'naam-zone:   "' + (p.nameText||'') + '"';
+}
+
+// ---------- Foto maken & analyseren ----------
+$('manualScan').addEventListener('click', async () => {
+  if(!ready){ $('ocrStatus').textContent='Start eerst de camera.'; return; }
+  // 1) scherpe foto bevriezen
+  const still = captureStill();
+  video.classList.add('hidden');
+  canvas.classList.remove('hidden');
+  $('reticle').classList.add('hidden');
+  $('manualScan').classList.add('hidden');
+  $('retry').classList.remove('hidden');
+  $('ocrSpin').classList.add('on');
+  $('ocrStatus').textContent = '🔎 Foto analyseren...';
+  // 2) OCR op de zones van de foto
+  try{
+    const p = await readCardFromStill(still);
+    updateDebug(p);
+    $('ocrSpin').classList.remove('on');
+    doLookup(p);
+  }catch(e){
+    $('ocrSpin').classList.remove('on');
+    $('ocrStatus').textContent = '⚠️ OCR-fout: ' + e.message;
+  }
+});
+
+// ---------- Beslissen wat we opzoeken (naam eerst) ----------
+function doLookup(p){
+  if(p.name && p.raw){
+    $('ocrStatus').textContent = '✅ ' + p.name + ' · ' + p.raw + ' — opzoeken...';
+    lookupByNumber(p.num, p.total, p.raw, p.name);
+  }else if(p.name){
+    $('ocrStatus').textContent = '✅ Naam: ' + p.name + ' — kies hieronder de juiste versie.';
+    $('searchInput').value = p.name;
+    runSearch(p.name);
+  }else if(p.raw){
+    $('ocrStatus').textContent = '✅ Nummer ' + p.raw + ' — opzoeken...';
+    lookupByNumber(p.num, p.total, p.raw, null);
+  }else{
+    $('ocrStatus').textContent = '🤔 Naam/nummer niet leesbaar. Houd de kaart dichterbij, scherp en bij goed licht — of typ de naam hieronder.';
+  }
+}
+
+$('retry').addEventListener('click', () => {
+  canvas.classList.add('hidden');
+  video.classList.remove('hidden');
+  $('reticle').classList.remove('hidden');
+  $('retry').classList.add('hidden');
+  startScanLoop();
+});
+
+// ---------- Zoeken via pokemontcg.io ----------
+$('searchBtn').addEventListener('click', () => runSearch($('searchInput').value.trim()));
+$('searchInput').addEventListener('keydown', e => { if(e.key==='Enter') runSearch($('searchInput').value.trim()); });
+
+function eur(v){ return v==null ? null : '€ ' + v.toFixed(2).replace('.',','); }
+
+// ---------- Opzoeken via kaartnummer + settotaal (uniek), naam als extra filter ----------
+async function lookupByNumber(num, total, raw, name){
+  $('apiSpin').classList.add('on');
+  $('apiStatus').textContent = 'Kaart ' + raw + ' opzoeken...';
+  $('results').innerHTML = '';
+  // varianten: nummer met en zonder voorloopnullen, total als printedTotal of total
+  const numVariants = [String(num), String(num).padStart(3,'0')];
+  const totalFields = ['set.printedTotal', 'set.total'];
+  try{
+    let cards = [];
+    for(const tf of totalFields){
+      for(const nv of numVariants){
+        const q = `number:${nv} ${tf}:${total}`;
+        const url = 'https://api.pokemontcg.io/v2/cards?q='+encodeURIComponent(q)+'&pageSize=20';
+        const res = await fetch(url);
+        if(!res.ok) continue;
+        const j = await res.json();
+        if(j.data && j.data.length){ cards = j.data; break; }
+      }
+      if(cards.length) break;
+    }
+
+    // Als de naam ook gelezen is: gebruik die om te verfijnen
+    const firstWord = name ? name.toLowerCase().split(' ')[0] : '';
+    if(cards.length > 1 && firstWord.length >= 3){
+      const filtered = cards.filter(c => c.name.toLowerCase().includes(firstWord));
+      if(filtered.length) cards = filtered;
+    }
+
+    $('apiSpin').classList.remove('on');
+
+    if(!cards.length){
+      // terugval: zoek op naam als die wél gelezen is
+      if(name && name.length >= 3){
+        $('apiStatus').textContent = 'Nummer ' + raw + ' niet gevonden — zoeken op naam "' + name + '"...';
+        runSearch(name);
+        return;
+      }
+      $('apiStatus').textContent = 'Geen exacte match voor ' + raw + '. Typ eventueel de naam handmatig.';
+      $('results').innerHTML = '<div class="empty">Niets gevonden voor nummer '+raw+' 😕</div>';
+      return;
+    }
+    $('apiStatus').textContent = cards.length + ' kaart(en) gevonden voor ' + raw + (name?(' · '+name):'') + '.';
+    renderCards(cards);
+  }catch(e){
+    $('apiSpin').classList.remove('on');
+    $('apiStatus').textContent = '⚠️ Fout bij ophalen: ' + e.message;
+  }
+}
+
+async function runSearch(query){
+  if(!query){ $('apiStatus').textContent='Typ eerst een kaartnaam.'; return; }
+  $('apiSpin').classList.add('on');
+  $('apiStatus').textContent = 'Zoeken naar "' + query + '"...';
+  $('results').innerHTML = '';
+  try{
+    const url = 'https://api.pokemontcg.io/v2/cards?q=name:"'+encodeURIComponent(query)+
+                '"&orderBy=-set.releaseDate&pageSize=12';
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('API status '+res.status);
+    const json = await res.json();
+    $('apiSpin').classList.remove('on');
+    const cards = json.data || [];
+    if(!cards.length){
+      $('apiStatus').textContent = 'Geen kaarten gevonden voor "'+query+'". Probeer een andere spelling.';
+      $('results').innerHTML = '<div class="empty">Niets gevonden 😕</div>';
+      return;
+    }
+    $('apiStatus').textContent = cards.length + ' kaart(en) gevonden.';
+    renderCards(cards);
+  }catch(e){
+    $('apiSpin').classList.remove('on');
+    $('apiStatus').textContent = '⚠️ Fout bij ophalen: ' + e.message;
+  }
+}
+
+function renderCards(cards){
+  const wrap = $('results');
+  wrap.innerHTML = '';
+  cards.forEach(c => {
+    // Cardmarket (al in EUR)
+    let cmVal = null;
+    if(c.cardmarket && c.cardmarket.prices){
+      const p = c.cardmarket.prices;
+      cmVal = p.trendPrice ?? p.averageSellPrice ?? p.avg30 ?? p.avg7 ?? null;
+    }
+    // TCGplayer (USD -> EUR)
+    let tcgUsd = null;
+    if(c.tcgplayer && c.tcgplayer.prices){
+      for(const k of Object.keys(c.tcgplayer.prices)){
+        const pp = c.tcgplayer.prices[k];
+        const v = pp.market ?? pp.mid ?? pp.high ?? null;
+        if(v!=null){ tcgUsd = v; break; }
+      }
+    }
+    const tcgEur = tcgUsd!=null ? tcgUsd * USD_TO_EUR : null;
+
+    const cmLink = c.cardmarket && c.cardmarket.url ? c.cardmarket.url : 'https://www.cardmarket.com/en/Pokemon';
+    const tcgLink = c.tcgplayer && c.tcgplayer.url ? c.tcgplayer.url : 'https://www.tcgplayer.com/';
+
+    const img = c.images ? (c.images.large || c.images.small) : '';
+
+    // ---- Details samenstellen ----
+    const rarity = c.rarity || '';
+    const rl = rarity.toLowerCase();
+    const tags = [];
+    if(rarity) tags.push(`<span class="chip rarity-chip">${rarity}</span>`);
+    if(/holo|rainbow|gold|secret|shiny/.test(rl)) tags.push('<span class="chip holo">✨ Holographic</span>');
+    if(/illustration|alt|amazing|trainer gallery/.test(rl)) tags.push('<span class="chip altart">🎨 Alt / Illustration art</span>');
+    if(/secret|rainbow|gold|hyper|special/.test(rl)) tags.push('<span class="chip special">⭐ Secret / Special</span>');
+
+    // energie-types als gekleurde badges
+    const typeChips = (c.types||[]).map(t => `<span class="chip type t-${t}">${t}</span>`).join('');
+    // subtypes (bv. VMAX, ex, Stage 1, Basic ...)
+    const subChips = (c.subtypes||[]).map(s => `<span class="chip">${s}</span>`).join('');
+
+    const detailRows = [];
+    detailRows.push(`<div class="rc-detail"><span>Soort</span><b>${c.supertype||'—'}</b></div>`);
+    if(c.hp) detailRows.push(`<div class="rc-detail"><span>HP</span><b>${c.hp}</b></div>`);
+    if(c.artist) detailRows.push(`<div class="rc-detail"><span>Illustrator</span><b>${c.artist}</b></div>`);
+
+    const el = document.createElement('div');
+    el.className = 'result-card';
+    el.innerHTML = `
+      <img src="${img}" alt="${c.name}" loading="lazy">
+      <div class="rc-body">
+        <div class="rc-name">${c.name}</div>
+        <div class="rc-meta">${(c.set?c.set.name:'?')} · #${c.number||'?'}/${(c.set?(c.set.printedTotal||c.set.total):'?')}${c.set&&c.set.releaseDate?' · '+c.set.releaseDate.slice(0,4):''}</div>
+        ${(typeChips||subChips)?`<div class="chips">${typeChips}${subChips}</div>`:''}
+        ${tags.length?`<div class="chips">${tags.join('')}</div>`:''}
+        ${detailRows.join('')}
+        <div class="price-block">
+          <div class="price">
+            <span class="lbl">Cardmarket</span>
+            <span class="val">${eur(cmVal) ?? '—'}</span>
+          </div>
+          <div class="price">
+            <span class="lbl">TCGplayer ≈</span>
+            <span class="val small">${eur(tcgEur) ?? '—'}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:4px">
+            <a class="src-link" href="${cmLink}" target="_blank">Cardmarket →</a>
+            <a class="src-link" href="${tcgLink}" target="_blank">TCGplayer →</a>
+          </div>
+        </div>
+      </div>`;
+    wrap.appendChild(el);
+  });
+}
+
+$('rateInfo').textContent = 'vast op ' + USD_TO_EUR.toString().replace('.',',');
+</script>
+</body>
+</html>
